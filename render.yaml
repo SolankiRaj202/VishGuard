@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: vishguard-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false   # you will paste this manually in the Render dashboard
+      - key: PORT
+        value: 4000
