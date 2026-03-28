@@ -373,6 +373,7 @@ body {
   border: 1px solid rgba(239, 68, 68, 0.35);
   background: rgba(239, 68, 68, 0.1);
   animation: slide-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+  position: relative;
 }
 
 @keyframes slide-in {
@@ -653,10 +654,75 @@ body {
     grid-template-rows: auto;
   }
   .dashboard-left { grid-row: auto; }
-  .stats-row { grid-template-columns: repeat(3, 1fr); }
+}
+
+@media (max-width: 650px) {
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 16px;
+  }
+  .control-panel {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .btn-start, .btn-reset, .recording-indicator {
+    flex: 1;
+    justify-content: center;
+    text-align: center;
+    box-sizing: border-box;
+  }
+  .tabs {
+    flex-direction: column;
+  }
+  .stats-row {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+  }
+  .stat-card {
+    padding: 12px 10px;
+  }
+  .stat-value {
+    font-size: 1.2rem;
+  }
 }
 
 @media (max-width: 500px) {
-  .stats-row { grid-template-columns: 1fr; }
-  .header { flex-direction: column; gap: 12px; align-items: flex-start; }
+  .app {
+    padding: 16px 12px 48px;
+  }
+  .stats-row { 
+    grid-template-columns: 1fr; 
+  }
+  .header { 
+    flex-direction: column; 
+    gap: 16px; 
+    align-items: center; 
+    text-align: center;
+    padding: 24px 20px;
+  }
+  .header-brand {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .threat-score-row {
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    gap: 12px;
+  }
+  .threat-score-value {
+    font-size: 4rem;
+  }
+  .alert-banner {
+    flex-direction: column;
+    text-align: center;
+    padding: 20px;
+  }
+  .alert-dismiss {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+  }
 }
