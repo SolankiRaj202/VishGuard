@@ -1,75 +1,63 @@
-# VishGuard — Real-Time AI Call Spam & Phishing Detection System
+# VishGuard — AI-Powered Call Threat Detector
 
-## Quick Start
+VishGuard is a real-time voice phishing (vishing) and scam detection system. It actively monitors phone calls, transcribes the audio, and uses Google's **Gemini AI** to detect social engineering threats, urgency tactics, and requests for sensitive information.
 
-### Step 1: Configure API Keys
+## 🌟 Features
 
-```powershell
-cd c:\Users\rysol\Downloads\vo\backend
-copy .env.example .env
-notepad .env
+- **Live Monitoring:** Uses robust `MediaRecorder` audio chunking (every 20 seconds) to transcribe and analyze live conversations. Flawlessly supports mobile devices (iOS and Android).
+- **Audio File Upload:** Upload `.mp3`, `.wav`, or `.m4a` recordings of suspicious calls for an instant full-text transcription and threat assessment.
+- **AI Threat Analysis:** Evaluates the transcript to provide a Threat Score (0-100), Category (e.g., "Vishing Attempt", "Safe"), and highlights specific suspicious phrases.
+- **Mobile-Ready UI:** Premium dark-mode dashboard built with React and Vite.
+
+## 🚀 Architecture & Deployment
+
+The system is split into a frontend and backend, both configured for free continuous deployment.
+
+### Backend (Node.js + Express)
+- Hosted on **Render** (free tier).
+- Receives audio chunks via the `/transcribe` and `/analyze-audio` endpoints.
+- Processes audio directly through the `gemini-2.5-flash` multimodal AI model.
+- Automatically deployed via `render.yaml`.
+
+### Frontend (React + Vite)
+- Hosted on **GitHub Pages**.
+- Automatically built and deployed via GitHub Actions (`.github/workflows/deploy.yml`).
+- Uses environment variables (`VITE_BACKEND_URL`) to connect to the Render backend.
+
+---
+
+## 💻 Local Development Setup
+
+If you want to run VishGuard locally on your own machine:
+
+### 1. Start the Backend
+```bash
+cd backend
+npm install
 ```
-
-Add your keys in `.env`:
-```
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=AIza...
+Create a `.env` file inside the `backend` folder and add your Gemini API key:
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
 PORT=4000
 ```
-
-### Step 2: Start the Backend
-
-```powershell
-cd c:\Users\rysol\Downloads\vo\backend
+Run the server:
+```bash
 node server.js
 ```
+*The backend will be live at `http://localhost:4000`*
 
-You should see:
-```
-🚀 Vishing Detector Backend running on http://localhost:4000
-```
-
-### Step 3: Start the Frontend (new terminal)
-
-```powershell
-cd c:\Users\rysol\Downloads\vo\frontend
+### 2. Start the Frontend
+Open a new terminal window:
+```bash
+cd frontend
+npm install
 npm run dev
 ```
+*The React app will be live at `http://localhost:5173`*
 
-Open: **http://localhost:5173**
-
----
-
-## Usage
-
-1. Open **http://localhost:5173** in **Chrome** or **Edge**
-2. Click **▶ Start Monitoring**
-3. Allow microphone access when prompted
-4. Put your phone on **speakerphone** near the laptop
-5. Watch the live transcript and threat meter update in real time!
-
----
-
-## Project Structure
-
-```
-vo/
-├── backend/
-│   ├── server.js          ← Express + Socket.io + Whisper + Gemini
-│   ├── package.json
-│   ├── .env               ← Your API keys (create from .env.example)
-│   └── .env.example
-└── frontend/
-    ├── src/
-    │   ├── App.jsx                    ← Main dashboard
-    │   ├── index.css                  ← Premium dark UI
-    │   ├── components/
-    │   │   ├── ThreatMeter.jsx        ← Animated threat bar
-    │   │   ├── ThreatBadge.jsx        ← Safe/Suspicious/High Risk badge
-    │   │   ├── AlertBanner.jsx        ← High-risk alert popup
-    │   │   ├── TranscriptPanel.jsx    ← Live transcript with highlights
-    │   │   └── AnalysisSummary.jsx    ← AI reasoning + flagged phrases
-    │   └── hooks/
-    │       └── useAudioCapture.js     ← MediaRecorder mic capture
-    └── index.html
-```
+## 📱 How to Use on Mobile
+When accessing the live GitHub Pages site on your phone:
+1. Tap the **Live Monitoring** tab.
+2. Press **Start Monitoring**.
+3. Accept the browser's microphone permissions.
+4. Put your phone on speakerphone next to the suspected scam call, and VishGuard will update its threat meter in real-time as the call progresses!
