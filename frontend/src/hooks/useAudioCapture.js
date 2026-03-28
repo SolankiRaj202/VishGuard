@@ -6,19 +6,15 @@ const CHUNK_INTERVAL_MS = 20000 // 20-second chunks
 export default function useAudioCapture({ isRecording, onChunkReady, onError }) {
   const mediaRecorderRef = useRef(null)
   const streamRef = useRef(null)
-  const chunksRef = useRef([])
-  const intervalRef = useRef(null)
+  const isRecordingRef = useRef(isRecording)
+  isRecordingRef.current = isRecording
 
-  const sendChunk = useCallback(async () => {
-    if (chunksRef.current.length === 0) return
-
-    const blob = new Blob(chunksRef.current, { type: 'audio/webm; codecs=opus' })
-    chunksRef.current = []
-
-    if (blob.size < 1000) return // skip tiny/empty chunks
+  const sendChunk = useCallback(async (blob) => {
+    if (!blob || blob.size < 1000) return // skip tiny/empty chunks
 
     const formData = new FormData()
-    formData.append('audio', blob, 'chunk.webm')
+    // By providing a generic filename extension, the backend Multer + Gemini will sniff the mime type from the blob
+    formData.append('audio', blob, 'chunk.m4a') 
 
     try {
       const res = await fetch(`${BACKEND_URL}/transcribe`, {
@@ -40,34 +36,46 @@ export default function useAudioCapture({ isRecording, onChunkReady, onError }) 
         .then((stream) => {
           streamRef.current = stream
 
-          const recorder = new MediaRecorder(stream, {
-            mimeType: MediaRecorder.isTypeSupported('audio/webm; codecs=opus')
-              ? 'audio/webm; codecs=opus'
-              : 'audio/webm',
-          })
-          mediaRecorderRef.current = recorder
+          const recordNextChunk = () => {
+            if (!isRecordingRef.current) return
 
-          recorder.ondataavailable = (e) => {
-            if (e.data && e.data.size > 0) {
-              chunksRef.current.push(e.data)
+            // Let the browser choose its most reliable native format (solves iOS errors!)
+            let options = {}
+            if (MediaRecorder.isTypeSupported('audio/webm')) {
+              options = { mimeType: 'audio/webm' }
+            } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+              options = { mimeType: 'audio/mp4' } 
             }
+
+            const recorder = new MediaRecorder(stream, options)
+            mediaRecorderRef.current = recorder
+
+            recorder.ondataavailable = (e) => {
+              if (e.data && e.data.size > 0) {
+                // Send the perfectly self-contained file (with headers) to backend
+                sendChunk(e.data)
+              }
+            }
+
+            recorder.start()
+
+            // After 20s, stop this chunk (which triggers ondataavailable) and instantly start the next
+            setTimeout(() => {
+              if (isRecordingRef.current && recorder.state !== 'inactive') {
+                recorder.stop()
+                recordNextChunk()
+              }
+            }, CHUNK_INTERVAL_MS)
           }
 
-          recorder.start(CHUNK_INTERVAL_MS)
-
-          // Every chunk interval, batch-send
-          intervalRef.current = setInterval(sendChunk, CHUNK_INTERVAL_MS + 200)
+          recordNextChunk()
         })
         .catch((err) => {
           console.error('Mic error:', err)
-          onError?.('Microphone access denied. Please allow microphone permissions.')
+          onError?.('Microphone access denied. Please check site permissions or try a different browser.')
         })
     } else {
-      // Stop recording
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-        intervalRef.current = null
-      }
+      // Force stop
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop()
       }
@@ -75,12 +83,16 @@ export default function useAudioCapture({ isRecording, onChunkReady, onError }) 
         streamRef.current.getTracks().forEach((t) => t.stop())
         streamRef.current = null
       }
-      // Send final chunk
-      sendChunk()
     }
 
     return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
+      isRecordingRef.current = false // Prevents loops if unmounted
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try { mediaRecorderRef.current.stop() } catch (_) {}
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop())
+      }
     }
   }, [isRecording, sendChunk, onError])
 }
