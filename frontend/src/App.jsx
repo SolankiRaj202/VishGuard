@@ -5,7 +5,7 @@ import AlertBanner from './components/AlertBanner'
 import TranscriptPanel from './components/TranscriptPanel'
 import AnalysisSummary from './components/AnalysisSummary'
 import AudioUpload from './components/AudioUpload'
-import useSpeechRecognition from './hooks/useSpeechRecognition'
+import useAudioCapture from './hooks/useAudioCapture'
 
 // In production this is set via VITE_BACKEND_URL env variable (see .env.production / GitHub Actions secret)
 // In local development it falls back to localhost:4000
@@ -86,8 +86,8 @@ export default function App() {
     fullTranscriptRef.current += ' ' + segment.text
   }, [])
 
-  // ─── Speech recognition (browser built-in, free) ───────────────────────────
-  useSpeechRecognition({ isRecording, onSegment: handleChunkReady, onError: setMicError })
+  // ─── Audio capture (Real media streaming recording for robust mobile support) 
+  useAudioCapture({ isRecording, onChunkReady: handleChunkReady, onError: setMicError })
 
   // ─── Control handlers ────────────────────────────────────────────────────────
   const handleStart = () => { setMicError(null); setIsRecording(true) }

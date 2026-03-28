@@ -1,6 +1,7 @@
 services:
   - type: web
     name: vishguard-backend
+    plan: free
     runtime: node
     rootDir: backend
     buildCommand: npm install

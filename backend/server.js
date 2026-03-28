@@ -146,6 +146,43 @@ Respond with valid JSON only — no markdown fences, no extra text.
   }
 });
 
+// ─── Live audio chunk transcription ───────────────────────────────────────────
+app.post('/transcribe', upload.single('audio'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No audio file received.' });
+
+  const tmpPath = req.file.path;
+  const mimeType = req.file.mimetype || 'audio/webm';
+
+  try {
+    const audioData = fs.readFileSync(tmpPath);
+    const base64Audio = audioData.toString('base64');
+
+    const prompt = `
+You are a highly accurate transcription assistant. 
+Please transcribe the following audio clip exactly word for word.
+Do not add any commentary, analysis, or introductory text.
+Return the result STRICTLY as a JSON object in this format:
+{
+  "transcript": "<the exact words spoken in the audio>"
+}
+If the audio is silent or contains no legible speech, return {"transcript": ""}.
+`;
+
+    const result = await aiModel.generateContent([
+      prompt,
+      { inlineData: { mimeType: mimeType, data: base64Audio } }
+    ]);
+
+    const data = parseAIResponse(result.response.text());
+    res.json({ transcript: data.transcript || '' });
+  } catch (err) {
+    console.error('[Transcribe] Error:', err.message);
+    res.status(500).json({ error: 'Transcription failed.', transcript: '' });
+  } finally {
+    try { fs.unlinkSync(tmpPath); } catch (_) {}
+  }
+});
+
 // ─── Start server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {

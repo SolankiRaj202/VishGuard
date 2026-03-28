@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 
-const BACKEND_URL = 'http://localhost:4000'
-const CHUNK_INTERVAL_MS = 5000 // 5-second chunks
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000'
+const CHUNK_INTERVAL_MS = 20000 // 20-second chunks
 
 export default function useAudioCapture({ isRecording, onChunkReady, onError }) {
   const mediaRecorderRef = useRef(null)
