@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000'
-const CHUNK_INTERVAL_MS = 20000 // 20-second chunks
+const CHUNK_INTERVAL_MS = 5000 // 5-second chunks for rapid real-time feedback
 
 export default function useAudioCapture({ isRecording, onChunkReady, onError }) {
   const mediaRecorderRef = useRef(null)
@@ -10,7 +10,7 @@ export default function useAudioCapture({ isRecording, onChunkReady, onError }) 
   isRecordingRef.current = isRecording
 
   const sendChunk = useCallback(async (blob) => {
-    if (!blob || blob.size < 1000) return // skip tiny/empty chunks
+    if (!blob) return // skip empty chunks
 
     const formData = new FormData()
     // By providing a generic filename extension, the backend Multer + Gemini will sniff the mime type from the blob
@@ -22,13 +22,20 @@ export default function useAudioCapture({ isRecording, onChunkReady, onError }) 
         body: formData,
       })
       const data = await res.json()
+      
+      if (!res.ok) {
+        onError?.(data.error || 'Server rejected the audio chunk.')
+        return
+      }
+
       if (data.transcript) {
         onChunkReady({ text: data.transcript, timestamp: new Date().toISOString() })
       }
     } catch (err) {
       console.error('Transcription fetch failed:', err)
+      onError?.('Lost connection to backend server. Reconnecting...')
     }
-  }, [onChunkReady])
+  }, [onChunkReady, onError])
 
   useEffect(() => {
     if (isRecording) {
