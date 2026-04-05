@@ -12,12 +12,13 @@ function isIOS() {
 
 // Get the best supported MIME type for this device
 function getBestMimeType() {
-  // iOS Safari only supports mp4 — check this FIRST
+  // Android Chrome prefers webm/opus. iOS Safari prefers mp4.
+  // We try webm first (covers most Android/desktop), then mp4 (covers iOS)
   const candidates = [
-    'audio/mp4',
-    'audio/mp4;codecs=mp4a.40.2',
     'audio/webm;codecs=opus',
     'audio/webm',
+    'audio/mp4',
+    'audio/mp4;codecs=mp4a.40.2',
     'audio/ogg;codecs=opus',
     'audio/ogg',
   ]
