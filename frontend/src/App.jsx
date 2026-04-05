@@ -23,11 +23,13 @@ export default function App() {
   const [alertDismissed, setAlertDismissed] = useState(false)
   const [micError, setMicError] = useState(null)          // mic-access failures
   const [backendError, setBackendError] = useState(null)  // backend transcription hiccups
+  const [transcriptionStatus, setTranscriptionStatus] = useState(null) // 'Transcribing…' etc
   const [segmentCount, setSegmentCount] = useState(0)
   const [duration, setDuration] = useState(0)
   const durationRef = useRef(null)
   const analysisRef = useRef(null)
   const fullTranscriptRef = useRef('')
+  const firstSegmentRef = useRef(false) // track if we've received the first segment
 
   // ── Upload state ───────────────────────────────────────────────────────────
   const [uploadResult, setUploadResult] = useState(null)
@@ -91,17 +93,27 @@ export default function App() {
     })
     setSegmentCount((c) => c + 1)
     fullTranscriptRef.current += ' ' + segment.text
-  }, [])
-
-  // ─── Audio capture (sends chunks to /transcribe via Gemini) ─────────────────
-  useAudioCapture({ isRecording, onChunkReady: handleChunkReady, onError: (err) => {
-    if (err && (err.includes('Microphone') || err.includes('denied'))) {
-      setMicError(err)  // hard mic-access error — show yellow banner
-    } else {
-      setBackendError(err)  // soft backend/network error — show subtle note
-      setTimeout(() => setBackendError(null), 8000) // auto-clear after 8s
+    // Trigger immediate analysis on the very first segment so user sees results fast
+    if (!firstSegmentRef.current) {
+      firstSegmentRef.current = true
+      setTimeout(runAnalysis, 500)
     }
-  }})
+  }, [runAnalysis])
+
+  // ─── Audio capture (sends chunks to /transcribe) ─────────────────────────────
+  useAudioCapture({
+    isRecording,
+    onChunkReady: handleChunkReady,
+    onStatus: (status) => setTranscriptionStatus(status),
+    onError: (err) => {
+      if (err && (err.includes('Microphone') || err.includes('denied'))) {
+        setMicError(err)  // hard mic-access error — show yellow banner
+      } else {
+        setBackendError(err)  // soft backend/network error — show subtle note
+        setTimeout(() => setBackendError(null), 12000) // auto-clear after 12s
+      }
+    }
+  })
 
   // ─── Speech Recognition fallback (browser built-in, instant results) ────────
   // Runs in parallel — ensures transcript is always populated even if backend is slow/offline
@@ -110,8 +122,20 @@ export default function App() {
     if (err && err.includes('Microphone')) setMicError(err)
   }})
 
+  // ─── Wakeup backend before starting (handles Render cold-starts) ───────────
+  const wakeupBackend = useCallback(async () => {
+    try {
+      await fetch(`${BACKEND_URL}/health`, { method: 'GET' })
+    } catch (_) {}
+  }, [])
+
   // ─── Control handlers ────────────────────────────────────────────────────────
-  const handleStart = () => { setMicError(null); setIsRecording(true) }
+  const handleStart = async () => {
+    setMicError(null)
+    firstSegmentRef.current = false
+    await wakeupBackend() // ping backend to wake Render from sleep before we start
+    setIsRecording(true)
+  }
   const handleStop = () => { setIsRecording(false); setTimeout(runAnalysis, 1000) }
   const handleReset = () => {
     setIsRecording(false)
@@ -120,8 +144,10 @@ export default function App() {
     setAlertDismissed(false)
     setMicError(null)
     setBackendError(null)
+    setTranscriptionStatus(null)
     setDuration(0)
     setSegmentCount(0)
+    firstSegmentRef.current = false
     fullTranscriptRef.current = ''
   }
 
@@ -176,13 +202,23 @@ export default function App() {
 
       {/* ─── Backend transcription warning (soft) ──────────────────────────────── */}
       {backendError && isRecording && (
-        <div className="alert-banner" style={{ borderColor: 'rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.08)' }}>
+        <div className="alert-banner" style={{ borderColor: 'rgba(156,163,175,0.35)', background: 'rgba(156,163,175,0.06)' }}>
           <span className="alert-icon">ℹ️</span>
           <div className="alert-text">
-            <div className="alert-title" style={{ color: 'var(--accent-blue)' }}>AI Transcription Retrying</div>
-            <div className="alert-desc" style={{ color: 'rgba(139,148,255,0.8)' }}>Using browser fallback while Gemini reconnects…</div>
+            <div className="alert-title" style={{ color: 'var(--text-primary)' }}>AI Transcription Issue</div>
+            <div className="alert-desc">{backendError}</div>
           </div>
           <button className="alert-dismiss" onClick={() => setBackendError(null)}>✕</button>
+        </div>
+      )}
+
+      {/* ─── Transcription in-progress indicator ──────────────────────────────── */}
+      {transcriptionStatus && isRecording && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 20px',
+          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+          fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+          <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⏳</span>
+          {transcriptionStatus}
         </div>
       )}
 

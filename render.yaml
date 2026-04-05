@@ -7,7 +7,7 @@ services:
     buildCommand: npm install
     startCommand: node server.js
     envVars:
-      - key: GEMINI_API_KEY
-        sync: false   # you will paste this manually in the Render dashboard
+      - key: GEMINI_API_KEYS
+        sync: false   # Paste your comma-separated API keys manually in the Render dashboard
       - key: PORT
         value: 4000
