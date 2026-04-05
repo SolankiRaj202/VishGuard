@@ -1,13 +1,16 @@
 # VishGuard — AI-Powered Call Threat Detector
 
-VishGuard is a real-time voice phishing (vishing) and scam detection system. It actively monitors phone calls, transcribes the audio, and uses Google's **Gemini AI** to detect social engineering threats, urgency tactics, and requests for sensitive information.
+VishGuard is a real-time voice phishing (vishing) and scam detection system. It actively monitors phone calls, transcribes the audio, and uses Google's **Gemini AI** to detect social engineering threats, urgency tactics, and requests for sensitive information. 
 
 ## 🌟 Features
 
 - **Live Monitoring:** Uses robust `MediaRecorder` audio chunking (every 20 seconds) to transcribe and analyze live conversations. Flawlessly supports mobile devices (iOS and Android).
 - **Audio File Upload:** Upload `.mp3`, `.wav`, or `.m4a` recordings of suspicious calls for an instant full-text transcription and threat assessment.
-- **AI Threat Analysis:** Evaluates the transcript to provide a Threat Score (0-100), Category (e.g., "Vishing Attempt", "Safe"), and highlights specific suspicious phrases.
-- **Mobile-Ready UI:** Premium dark-mode dashboard built with React and Vite.
+- **Enterprise Monochromatic UI:** A razor-sharp, distraction-free grayscale console where only the threat indicators (Red, Amber, Green) grab attention.
+- **Advanced Backend Architecture:** 
+  - **API Key Failover Rotation:** Seamlessly rotates through an unlimited pool of Gemini API keys.
+  - **Hard-Capped Quota Tracking:** Stops an API key from exceeding 19 requests per day to prevent surprise billing quotas organically.
+  - **Hidden Admin Dashboard:** Access `/admin-tracker` on the backend to view live progress bar usages of all API keys via a file-synced database (`usage.json`).
 
 ## 🚀 Architecture & Deployment
 
@@ -15,8 +18,8 @@ The system is split into a frontend and backend, both configured for free contin
 
 ### Backend (Node.js + Express)
 - Hosted on **Render** (free tier).
-- Receives audio chunks via the `/transcribe` and `/analyze-audio` endpoints.
 - Processes audio directly through the `gemini-2.5-flash` multimodal AI model.
+- Includes the hidden `GET /admin-tracker` UI dashboard visualizing daily request health.
 - Automatically deployed via `render.yaml`.
 
 ### Frontend (React + Vite)
@@ -35,9 +38,10 @@ If you want to run VishGuard locally on your own machine:
 cd backend
 npm install
 ```
-Create a `.env` file inside the `backend` folder and add your Gemini API key:
+Create a `.env` file inside the `backend` folder and add your Gemini API keys (comma-separated):
 ```env
-GEMINI_API_KEY=your_gemini_api_key_here
+# Support 1 to 5+ API keys by separating via comma
+GEMINI_API_KEYS=key1_string_here,key2_string_here,key3_string_here
 PORT=4000
 ```
 Run the server:
@@ -45,6 +49,7 @@ Run the server:
 node server.js
 ```
 *The backend will be live at `http://localhost:4000`*
+*(View the API tracker at `http://localhost:4000/admin-tracker`)*
 
 ### 2. Start the Frontend
 Open a new terminal window:
