@@ -6,6 +6,7 @@ import TranscriptPanel from './components/TranscriptPanel'
 import AnalysisSummary from './components/AnalysisSummary'
 import AudioUpload from './components/AudioUpload'
 import useAudioCapture from './hooks/useAudioCapture'
+import useSpeechRecognition from './hooks/useSpeechRecognition'
 
 // In production this is set via VITE_BACKEND_URL env variable (see .env.production / GitHub Actions secret)
 // In local development it falls back to localhost:4000
@@ -20,7 +21,8 @@ export default function App() {
   const [segments, setSegments] = useState([])
   const [threatData, setThreatData] = useState({ score: 0, category: 'Safe', flaggedPhrases: [], reasoning: '' })
   const [alertDismissed, setAlertDismissed] = useState(false)
-  const [micError, setMicError] = useState(null)
+  const [micError, setMicError] = useState(null)          // mic-access failures
+  const [backendError, setBackendError] = useState(null)  // backend transcription hiccups
   const [segmentCount, setSegmentCount] = useState(0)
   const [duration, setDuration] = useState(0)
   const durationRef = useRef(null)
@@ -79,15 +81,34 @@ export default function App() {
     return () => clearInterval(analysisRef.current)
   }, [isRecording, runAnalysis])
 
-  // ─── Handle new transcript segment ─────────────────────────────────────────
+  // ─── Handle new transcript segment (from either hook) ───────────────────────
   const handleChunkReady = useCallback((segment) => {
-    setSegments((prev) => [...prev, segment])
+    setSegments((prev) => {
+      // Deduplicate: skip if the same text was just added in the last 2 segments
+      const recent = prev.slice(-2).map(s => s.text.trim().toLowerCase())
+      if (recent.includes(segment.text.trim().toLowerCase())) return prev
+      return [...prev, segment]
+    })
     setSegmentCount((c) => c + 1)
     fullTranscriptRef.current += ' ' + segment.text
   }, [])
 
-  // ─── Audio capture (Real media streaming recording for robust mobile support) 
-  useAudioCapture({ isRecording, onChunkReady: handleChunkReady, onError: setMicError })
+  // ─── Audio capture (sends chunks to /transcribe via Gemini) ─────────────────
+  useAudioCapture({ isRecording, onChunkReady: handleChunkReady, onError: (err) => {
+    if (err && (err.includes('Microphone') || err.includes('denied'))) {
+      setMicError(err)  // hard mic-access error — show yellow banner
+    } else {
+      setBackendError(err)  // soft backend/network error — show subtle note
+      setTimeout(() => setBackendError(null), 8000) // auto-clear after 8s
+    }
+  }})
+
+  // ─── Speech Recognition fallback (browser built-in, instant results) ────────
+  // Runs in parallel — ensures transcript is always populated even if backend is slow/offline
+  useSpeechRecognition({ isRecording, onSegment: handleChunkReady, onError: (err) => {
+    // Only surface mic-level errors (not "not-supported", which just means Chrome isn't available)
+    if (err && err.includes('Microphone')) setMicError(err)
+  }})
 
   // ─── Control handlers ────────────────────────────────────────────────────────
   const handleStart = () => { setMicError(null); setIsRecording(true) }
@@ -98,6 +119,7 @@ export default function App() {
     setThreatData({ score: 0, category: 'Safe', flaggedPhrases: [], reasoning: '' })
     setAlertDismissed(false)
     setMicError(null)
+    setBackendError(null)
     setDuration(0)
     setSegmentCount(0)
     fullTranscriptRef.current = ''
@@ -149,6 +171,18 @@ export default function App() {
             <div className="alert-desc" style={{ color: 'rgba(245,158,11,0.75)' }}>{micError}</div>
           </div>
           <button className="alert-dismiss" onClick={() => setMicError(null)}>✕</button>
+        </div>
+      )}
+
+      {/* ─── Backend transcription warning (soft) ──────────────────────────────── */}
+      {backendError && isRecording && (
+        <div className="alert-banner" style={{ borderColor: 'rgba(99,102,241,0.35)', background: 'rgba(99,102,241,0.08)' }}>
+          <span className="alert-icon">ℹ️</span>
+          <div className="alert-text">
+            <div className="alert-title" style={{ color: 'var(--accent-blue)' }}>AI Transcription Retrying</div>
+            <div className="alert-desc" style={{ color: 'rgba(139,148,255,0.8)' }}>Using browser fallback while Gemini reconnects…</div>
+          </div>
+          <button className="alert-dismiss" onClick={() => setBackendError(null)}>✕</button>
         </div>
       )}
 
