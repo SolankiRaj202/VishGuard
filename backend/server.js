@@ -20,7 +20,7 @@ app.use(express.json());
 const upload = multer({ dest: os.tmpdir() });
 
 // ─── API Key Management & Rotation ──────────────────────────────────────────
-const apiKeys = (process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '')
+const apiKeys = (process.env.API_KEYS || process.env.GEMINI_API_KEYS || process.env.GEMINI_API_KEY || '')
   .split(',')
   .map(k => k.trim())
   .filter(k => k);
