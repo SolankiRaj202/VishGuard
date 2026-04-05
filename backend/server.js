@@ -45,23 +45,24 @@ function initializeUsage() {
     console.error('Error reading usage.json:', err);
   }
 
-  keyUsage = apiKeys.map(key => {
+  // Store by index (key_0, key_1...) — NEVER by actual key string, preventing key exposure
+  keyUsage = apiKeys.map((_, i) => {
     const defaultData = { count: 0, date: today };
-    const saved = fileData[key];
-    
+    const saved = fileData[`key_${i}`];
     if (saved && saved.date === today) {
-      return saved; // Resume today's quota properly safely across instances
+      return saved;
     }
-    return defaultData; // Start fresh today
+    return defaultData;
   });
-  
-  saveUsage(); // write initial or reset state across instances
+
+  saveUsage();
 }
 
 function saveUsage() {
   const data = {};
-  apiKeys.forEach((key, i) => {
-    data[key] = keyUsage[i];
+  // Use positional index labels — no API key strings ever written to disk
+  keyUsage.forEach((usage, i) => {
+    data[`key_${i}`] = usage;
   });
   try {
     fs.writeFileSync(USAGE_FILE, JSON.stringify(data, null, 2));
@@ -69,6 +70,7 @@ function saveUsage() {
     console.error('Error saving usage.json:', err);
   }
 }
+
 
 // Call initialization on startup
 initializeUsage();
@@ -84,7 +86,7 @@ function ensureValidKey() {
   while (attempts < apiKeys.length) {
     const usage = keyUsage[currentKeyIndex];
     const today = new Date().toDateString();
-    
+
     // Reset limit if a new day has started
     if (usage.date !== today) {
       usage.count = 0;
@@ -105,7 +107,7 @@ function ensureValidKey() {
 
 async function executeWithKeyRotation(generateFn) {
   if (apiKeys.length === 0) throw new Error('No API keys configured');
-  
+
   let attempts = 0;
   while (attempts < apiKeys.length) {
     if (!ensureValidKey()) {
@@ -116,14 +118,14 @@ async function executeWithKeyRotation(generateFn) {
       const model = getActiveModel();
       keyUsage[currentKeyIndex].count++; // Optimistically increment usage limit
       saveUsage(); // persist increment across instances
-      
+
       return await generateFn(model);
     } catch (err) {
       const isQuotaError = err.status === 429 || (err.message && err.message.toLowerCase().includes('quota'));
       if (isQuotaError) {
         console.warn(`[API Key Rotation] Key index ${currentKeyIndex} hit Google hard quota/429. Rotating to next key...`);
         // Max out its local limit so we don't try it again until tomorrow
-        keyUsage[currentKeyIndex].count = DAILY_LIMIT; 
+        keyUsage[currentKeyIndex].count = DAILY_LIMIT;
         saveUsage();
         currentKeyIndex = (currentKeyIndex + 1) % apiKeys.length;
         attempts++;
@@ -188,8 +190,10 @@ function resolveMimeType(file, fallback) {
   if (mt && mt !== 'application/octet-stream') return mt
   // Infer from original filename extension as last resort
   const ext = (file.originalname || '').split('.').pop().toLowerCase()
-  const map = { webm: 'audio/webm', mp4: 'audio/mp4', m4a: 'audio/mp4', mp3: 'audio/mpeg',
-                wav: 'audio/wav', ogg: 'audio/ogg', flac: 'audio/flac', aac: 'audio/aac' }
+  const map = {
+    webm: 'audio/webm', mp4: 'audio/mp4', m4a: 'audio/mp4', mp3: 'audio/mpeg',
+    wav: 'audio/wav', ogg: 'audio/ogg', flac: 'audio/flac', aac: 'audio/aac'
+  }
   return map[ext] || fallback
 }
 
@@ -285,7 +289,7 @@ app.get('/admin-tracker', (req, res) => {
     const pct = Math.min((usage.count / DAILY_LIMIT) * 100, 100);
     const isExhausted = usage.count >= DAILY_LIMIT;
     const isActive = (index === currentKeyIndex && !isExhausted);
-    
+
     let statusText = 'Standby';
     if (isExhausted) statusText = '<span class="exhausted">Exhausted</span>';
     else if (isActive) statusText = '<span class="active">Active Now</span>';
@@ -315,7 +319,7 @@ app.get('/admin-tracker', (req, res) => {
     </body>
     </html>
   `;
-  
+
   res.send(html);
 });
 
@@ -395,7 +399,7 @@ Respond with valid JSON only — no markdown fences, no extra text.
     res.status(500).json({ error: 'Audio analysis failed. ' + err.message });
   } finally {
     // Clean up temp file
-    try { fs.unlinkSync(tmpPath); } catch (_) {}
+    try { fs.unlinkSync(tmpPath); } catch (_) { }
   }
 });
 
@@ -432,7 +436,7 @@ If the audio is silent or contains no legible speech, return {"transcript": ""}.
     console.error('[Transcribe] Error:', err.message);
     res.status(500).json({ error: 'Transcription failed.', transcript: '' });
   } finally {
-    try { fs.unlinkSync(tmpPath); } catch (_) {}
+    try { fs.unlinkSync(tmpPath); } catch (_) { }
   }
 });
 
