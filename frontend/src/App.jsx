@@ -225,11 +225,11 @@ export default function App() {
       {/* ─── Stats Row ──────────────────────────────────────────────────────── */}
       <div className="stats-row">
         <div className="stat-card">
-          <div className="stat-value" style={{ color: 'var(--accent-blue)' }}>{formatDuration(duration)}</div>
+          <div className="stat-value">{formatDuration(duration)}</div>
           <div className="stat-label">Duration</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value" style={{ color: 'var(--accent-cyan)' }}>{segmentCount}</div>
+          <div className="stat-value">{segmentCount}</div>
           <div className="stat-label">Segments</div>
         </div>
         <div className="stat-card">

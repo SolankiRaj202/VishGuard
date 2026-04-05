@@ -3,15 +3,15 @@ import ThreatBadge from './ThreatBadge'
 
 export default function ThreatMeter({ score, category }) {
   const getBarColor = () => {
-    if (score >= 70) return 'linear-gradient(90deg, #f59e0b, #ef4444)'
-    if (score >= 30) return 'linear-gradient(90deg, #06b6d4, #f59e0b)'
-    return 'linear-gradient(90deg, #3b82f6, #10b981)'
+    if (score >= 70) return 'var(--danger-color)'
+    if (score >= 30) return 'var(--suspicious-color)'
+    return 'var(--safe-color)'
   }
 
   const getScoreColor = () => {
-    if (score >= 70) return '#ef4444'
-    if (score >= 30) return '#f59e0b'
-    return '#10b981'
+    if (score >= 70) return 'var(--danger-color)'
+    if (score >= 30) return 'var(--suspicious-color)'
+    return 'var(--safe-color)'
   }
 
   return (
