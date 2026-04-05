@@ -21,15 +21,17 @@ export default function App() {
   const [segments, setSegments] = useState([])
   const [threatData, setThreatData] = useState({ score: 0, category: 'Safe', flaggedPhrases: [], reasoning: '' })
   const [alertDismissed, setAlertDismissed] = useState(false)
-  const [micError, setMicError] = useState(null)          // mic-access failures
-  const [backendError, setBackendError] = useState(null)  // backend transcription hiccups
-  const [transcriptionStatus, setTranscriptionStatus] = useState(null) // 'Transcribing…' etc
+  const [micError, setMicError] = useState(null)
+  const [backendError, setBackendError] = useState(null)
+  const [transcriptionStatus, setTranscriptionStatus] = useState(null)
+  const [srStatus, setSrStatus] = useState(null)        // 'listening' | 'restarting' | null
+  const [interimText, setInterimText] = useState('')    // live partial speech text
   const [segmentCount, setSegmentCount] = useState(0)
   const [duration, setDuration] = useState(0)
   const durationRef = useRef(null)
   const analysisRef = useRef(null)
   const fullTranscriptRef = useRef('')
-  const firstSegmentRef = useRef(false) // track if we've received the first segment
+  const firstSegmentRef = useRef(false)
 
   // ── Upload state ───────────────────────────────────────────────────────────
   const [uploadResult, setUploadResult] = useState(null)
@@ -59,7 +61,7 @@ export default function App() {
   // ─── AI analysis loop ────────────────────────────────────────────────────────
   const runAnalysis = useCallback(async () => {
     const transcript = fullTranscriptRef.current
-    if (!transcript || transcript.trim().length < 10) return
+    if (!transcript || transcript.trim().length < 5) return  // lowered from 10 to 5
     try {
       const res = await fetch(`${BACKEND_URL}/analyze`, {
         method: 'POST',
@@ -100,27 +102,30 @@ export default function App() {
     }
   }, [runAnalysis])
 
-  // ─── Audio capture (sends chunks to /transcribe) ─────────────────────────────
+  // ─── Audio capture — only used for UPLOAD tab, not live (saves API quota)
+  // Live mode uses browser Speech Recognition exclusively for transcription
   useAudioCapture({
-    isRecording,
+    isRecording: false,  // disabled in live mode — SR handles transcription instead
     onChunkReady: handleChunkReady,
     onStatus: (status) => setTranscriptionStatus(status),
-    onError: (err) => {
-      if (err && (err.includes('Microphone') || err.includes('denied'))) {
-        setMicError(err)  // hard mic-access error — show yellow banner
-      } else {
-        setBackendError(err)  // soft backend/network error — show subtle note
-        setTimeout(() => setBackendError(null), 12000) // auto-clear after 12s
-      }
-    }
+    onError: () => {},
   })
 
-  // ─── Speech Recognition fallback (browser built-in, instant results) ────────
-  // Runs in parallel — ensures transcript is always populated even if backend is slow/offline
-  useSpeechRecognition({ isRecording, onSegment: handleChunkReady, onError: (err) => {
-    // Only surface mic-level errors (not "not-supported", which just means Chrome isn't available)
-    if (err && err.includes('Microphone')) setMicError(err)
-  }})
+  // ─── Speech Recognition — PRIMARY transcription for live monitoring ───────
+  useSpeechRecognition({
+    isRecording,
+    onSegment: handleChunkReady,
+    onInterim: (text) => setInterimText(text),
+    onStatusChange: (status) => setSrStatus(status),
+    onError: (err) => {
+      if (err && (err.includes('Microphone') || err.includes('denied'))) {
+        setMicError(err)
+      } else {
+        setBackendError(err)
+        setTimeout(() => setBackendError(null), 12000)
+      }
+    },
+  })
 
   // ─── Wakeup backend before starting (handles Render cold-starts) ───────────
   const wakeupBackend = useCallback(async () => {
@@ -145,6 +150,8 @@ export default function App() {
     setMicError(null)
     setBackendError(null)
     setTranscriptionStatus(null)
+    setSrStatus(null)
+    setInterimText('')
     setDuration(0)
     setSegmentCount(0)
     firstSegmentRef.current = false
@@ -288,6 +295,34 @@ export default function App() {
               </div>
               <div className="card-body">
                 <TranscriptPanel segments={segments} flaggedPhrases={threatData.flaggedPhrases} />
+                {/* Live interim text — shows partial speech before it becomes a final segment */}
+                {isRecording && interimText && (
+                  <div style={{
+                    padding: '10px 16px',
+                    marginTop: '8px',
+                    borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-secondary)',
+                    border: '1px dashed var(--border-bright)',
+                    fontSize: '0.85rem',
+                    color: 'var(--text-muted)',
+                    fontStyle: 'italic',
+                  }}>
+                    {interimText}
+                  </div>
+                )}
+                {/* SR status indicator */}
+                {isRecording && !interimText && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px',
+                    fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                    <span style={{
+                      display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%',
+                      background: srStatus === 'listening' ? 'var(--safe-color)' : 'var(--text-muted)',
+                      animation: srStatus === 'listening' ? 'blink 1.5s ease infinite' : 'none',
+                    }} />
+                    {srStatus === 'listening' ? 'Listening for speech…' :
+                      srStatus === 'restarting' ? 'Restarting microphone…' : 'Initializing…'}
+                  </div>
+                )}
               </div>
             </div>
           )}
