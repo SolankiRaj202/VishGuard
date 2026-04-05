@@ -5,74 +5,95 @@ import AlertBanner from './components/AlertBanner'
 import TranscriptPanel from './components/TranscriptPanel'
 import AnalysisSummary from './components/AnalysisSummary'
 import AudioUpload from './components/AudioUpload'
-import useAudioCapture from './hooks/useAudioCapture'
-import useSpeechRecognition from './hooks/useSpeechRecognition'
 
-// In production this is set via VITE_BACKEND_URL env variable (see .env.production / GitHub Actions secret)
-// In local development it falls back to localhost:4000
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000'
-const ANALYSIS_INTERVAL_MS = 30000 // re-analyze every 30 seconds
+const ANALYSIS_INTERVAL_MS = 20000  // analyze every 20s
+const CHUNK_INTERVAL_MS = 8000      // send audio every 8s
+
+// Pick best MIME for current device
+function getBestMimeType() {
+  const types = [
+    'audio/webm;codecs=opus',
+    'audio/webm',
+    'audio/mp4',
+    'audio/ogg;codecs=opus',
+    'audio/ogg',
+  ]
+  for (const t of types) {
+    try { if (MediaRecorder.isTypeSupported(t)) return t } catch (_) {}
+  }
+  return ''
+}
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('live') // 'live' | 'upload'
+  const [activeTab, setActiveTab] = useState('live')
 
-  // ── Live monitoring state ──────────────────────────────────────────────────
+  // ── Live monitoring state ─────────────────────────────────────────────────
   const [isRecording, setIsRecording] = useState(false)
   const [segments, setSegments] = useState([])
   const [threatData, setThreatData] = useState({ score: 0, category: 'Safe', flaggedPhrases: [], reasoning: '' })
   const [alertDismissed, setAlertDismissed] = useState(false)
   const [micError, setMicError] = useState(null)
   const [backendError, setBackendError] = useState(null)
-  const [transcriptionStatus, setTranscriptionStatus] = useState(null)
-  const [srStatus, setSrStatus] = useState(null)        // 'listening' | 'restarting' | null
-  const [interimText, setInterimText] = useState('')    // live partial speech text
+  const [liveStatus, setLiveStatus] = useState(null)   // e.g. 'Listening…', 'Transcribing…'
+  const [interimText, setInterimText] = useState('')
   const [segmentCount, setSegmentCount] = useState(0)
   const [duration, setDuration] = useState(0)
-  const durationRef = useRef(null)
-  const analysisRef = useRef(null)
-  const fullTranscriptRef = useRef('')
-  const firstSegmentRef = useRef(false)
 
-  // ── Upload state ───────────────────────────────────────────────────────────
+  // ── Upload state ──────────────────────────────────────────────────────────
   const [uploadResult, setUploadResult] = useState(null)
   const [uploadFileName, setUploadFileName] = useState('')
 
-  // ── Shared ─────────────────────────────────────────────────────────────────
+  // ── Shared ────────────────────────────────────────────────────────────────
   const [backendOnline, setBackendOnline] = useState(null)
 
-  // ─── Check backend health on mount ─────────────────────────────────────────
+  // Internal refs
+  const fullTranscriptRef = useRef('')
+  const firstSegmentRef = useRef(false)
+  const durationRef = useRef(null)
+  const analysisRef = useRef(null)
+  const isRecordingRef = useRef(false)
+  isRecordingRef.current = isRecording
+
+  // Recorder refs
+  const mediaRecorderRef = useRef(null)
+  const streamRef = useRef(null)
+  const recognitionRef = useRef(null)
+  const srRestartRef = useRef(null)
+
+  // ─── Check backend health ────────────────────────────────────────────────
   useEffect(() => {
     fetch(`${BACKEND_URL}/health`)
-      .then((r) => r.json())
+      .then(r => r.json())
       .then(() => setBackendOnline(true))
       .catch(() => setBackendOnline(false))
   }, [])
 
-  // ─── Duration timer ─────────────────────────────────────────────────────────
+  // ─── Duration timer ───────────────────────────────────────────────────────
   useEffect(() => {
     if (isRecording) {
-      durationRef.current = setInterval(() => setDuration((d) => d + 1), 1000)
+      durationRef.current = setInterval(() => setDuration(d => d + 1), 1000)
     } else {
       clearInterval(durationRef.current)
     }
     return () => clearInterval(durationRef.current)
   }, [isRecording])
 
-  // ─── AI analysis loop ────────────────────────────────────────────────────────
+  // ─── Analysis loop ────────────────────────────────────────────────────────
   const runAnalysis = useCallback(async () => {
-    const transcript = fullTranscriptRef.current
-    if (!transcript || transcript.trim().length < 5) return  // lowered from 10 to 5
+    const t = fullTranscriptRef.current.trim()
+    if (t.length < 5) return
     try {
       const res = await fetch(`${BACKEND_URL}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript }),
+        body: JSON.stringify({ transcript: t }),
       })
       const data = await res.json()
       setThreatData(data)
       if (data.score >= 70) setAlertDismissed(false)
     } catch (err) {
-      console.error('Analysis failed:', err)
+      console.warn('[App] Analysis error:', err.message)
     }
   }, [])
 
@@ -85,80 +106,201 @@ export default function App() {
     return () => clearInterval(analysisRef.current)
   }, [isRecording, runAnalysis])
 
-  // ─── Handle new transcript segment (from either hook) ───────────────────────
-  const handleChunkReady = useCallback((segment) => {
-    setSegments((prev) => {
-      // Deduplicate: skip if the same text was just added in the last 2 segments
+  // ─── Add segment (deduped) ────────────────────────────────────────────────
+  const addSegment = useCallback((text) => {
+    const clean = text.trim()
+    if (!clean) return
+    setSegments(prev => {
       const recent = prev.slice(-2).map(s => s.text.trim().toLowerCase())
-      if (recent.includes(segment.text.trim().toLowerCase())) return prev
-      return [...prev, segment]
+      if (recent.includes(clean.toLowerCase())) return prev
+      return [...prev, { text: clean, timestamp: new Date().toISOString() }]
     })
-    setSegmentCount((c) => c + 1)
-    fullTranscriptRef.current += ' ' + segment.text
-    // Trigger immediate analysis on the very first segment so user sees results fast
+    setSegmentCount(c => c + 1)
+    fullTranscriptRef.current += ' ' + clean
     if (!firstSegmentRef.current) {
       firstSegmentRef.current = true
       setTimeout(runAnalysis, 500)
     }
   }, [runAnalysis])
 
-  // ─── Audio capture — only used for UPLOAD tab, not live (saves API quota)
-  // Live mode uses browser Speech Recognition exclusively for transcription
-  useAudioCapture({
-    isRecording: false,  // disabled in live mode — SR handles transcription instead
-    onChunkReady: handleChunkReady,
-    onStatus: (status) => setTranscriptionStatus(status),
-    onError: () => {},
-  })
+  // ─── Method 1: Browser Speech Recognition ────────────────────────────────
+  const startSpeechRecognition = useCallback(() => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) return
 
-  // ─── Speech Recognition — PRIMARY transcription for live monitoring ───────
-  useSpeechRecognition({
-    isRecording,
-    onSegment: handleChunkReady,
-    onInterim: (text) => setInterimText(text),
-    onStatusChange: (status) => setSrStatus(status),
-    onError: (err) => {
-      if (err && (err.includes('Microphone') || err.includes('denied'))) {
-        setMicError(err)
-      } else {
-        setBackendError(err)
-        setTimeout(() => setBackendError(null), 12000)
+    if (srRestartRef.current) clearTimeout(srRestartRef.current)
+    if (recognitionRef.current) {
+      recognitionRef.current.onend = null
+      try { recognitionRef.current.stop() } catch (_) {}
+    }
+
+    const r = new SR()
+    recognitionRef.current = r
+    r.continuous = true
+    r.interimResults = true
+    r.maxAlternatives = 1
+
+    r.onstart = () => setLiveStatus('Listening…')
+
+    r.onresult = (e) => {
+      let interim = ''
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) {
+          addSegment(e.results[i][0].transcript)
+          interim = ''
+        } else {
+          interim += e.results[i][0].transcript
+        }
       }
-    },
-  })
+      setInterimText(interim)
+    }
 
-  // ─── Wakeup backend before starting (handles Render cold-starts) ───────────
-  const wakeupBackend = useCallback(async () => {
-    try {
-      await fetch(`${BACKEND_URL}/health`, { method: 'GET' })
-    } catch (_) {}
+    r.onerror = (e) => {
+      if (e.error === 'not-allowed') {
+        setMicError('Microphone access denied. Allow permissions and reload.')
+      }
+      // no-speech / network / audio-capture — just restart silently
+    }
+
+    r.onend = () => {
+      setInterimText('')
+      if (isRecordingRef.current) {
+        srRestartRef.current = setTimeout(startSpeechRecognition, 300)
+      } else {
+        setLiveStatus(null)
+      }
+    }
+
+    try { r.start() } catch (_) {
+      srRestartRef.current = setTimeout(startSpeechRecognition, 500)
+    }
+  }, [addSegment])
+
+  const stopSpeechRecognition = useCallback(() => {
+    if (srRestartRef.current) clearTimeout(srRestartRef.current)
+    setInterimText('')
+    if (recognitionRef.current) {
+      recognitionRef.current.onend = null
+      recognitionRef.current.onerror = null
+      recognitionRef.current.onresult = null
+      try { recognitionRef.current.stop() } catch (_) {}
+      recognitionRef.current = null
+    }
   }, [])
 
-  // ─── Control handlers ────────────────────────────────────────────────────────
+  // ─── Method 2: Backend audio chunk transcription ──────────────────────────
+  const sendAudioChunk = useCallback(async (blob, mimeType) => {
+    if (!blob || blob.size < 300) return
+    const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('ogg') ? 'ogg' : 'webm'
+    const fd = new FormData()
+    fd.append('audio', new Blob([blob], { type: mimeType }), `chunk.${ext}`)
+    setLiveStatus('Transcribing…')
+    try {
+      const controller = new AbortController()
+      const t = setTimeout(() => controller.abort(), 20000)
+      const res = await fetch(`${BACKEND_URL}/transcribe`, { method: 'POST', body: fd, signal: controller.signal })
+      clearTimeout(t)
+      if (res.ok) {
+        const data = await res.json()
+        if (data.transcript?.trim()) addSegment(data.transcript)
+      }
+    } catch (err) {
+      if (err.name !== 'AbortError') {
+        setBackendError('Backend transcription timed out. Browser recognition still active.')
+        setTimeout(() => setBackendError(null), 8000)
+      }
+    } finally {
+      if (isRecordingRef.current) setLiveStatus('Listening…')
+      else setLiveStatus(null)
+    }
+  }, [addSegment])
+
+  const startAudioCapture = useCallback(() => {
+    const mimeType = getBestMimeType()
+
+    const recordChunk = () => {
+      if (!isRecordingRef.current || !streamRef.current) return
+      let rec
+      try {
+        rec = mimeType
+          ? new MediaRecorder(streamRef.current, { mimeType })
+          : new MediaRecorder(streamRef.current)
+      } catch (_) {
+        rec = new MediaRecorder(streamRef.current)
+      }
+      mediaRecorderRef.current = rec
+      rec.ondataavailable = (e) => { if (e.data?.size > 0) sendAudioChunk(e.data, rec.mimeType || mimeType || 'audio/webm') }
+      rec.onstop = () => { if (isRecordingRef.current) recordChunk() }
+      rec.start()
+      setTimeout(() => {
+        if (isRecordingRef.current && rec.state !== 'inactive') rec.stop()
+      }, CHUNK_INTERVAL_MS)
+    }
+    recordChunk()
+  }, [sendAudioChunk])
+
+  const stopAudioCapture = useCallback(() => {
+    if (mediaRecorderRef.current?.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop() } catch (_) {}
+    }
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop())
+      streamRef.current = null
+    }
+  }, [])
+
+  // ─── Start / Stop handlers ────────────────────────────────────────────────
   const handleStart = async () => {
     setMicError(null)
     firstSegmentRef.current = false
-    await wakeupBackend() // ping backend to wake Render from sleep before we start
-    setIsRecording(true)
+    setLiveStatus('Connecting…')
+    // Wake Render backend
+    try { await fetch(`${BACKEND_URL}/health`) } catch (_) {}
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      streamRef.current = stream
+      setIsRecording(true)
+      setLiveStatus('Listening…')
+      startSpeechRecognition()
+      startAudioCapture()
+    } catch (err) {
+      setMicError('Microphone access denied. Please allow microphone permissions and reload.')
+      setLiveStatus(null)
+    }
   }
-  const handleStop = () => { setIsRecording(false); setTimeout(runAnalysis, 1000) }
-  const handleReset = () => {
+
+  const handleStop = () => {
     setIsRecording(false)
+    setLiveStatus(null)
+    stopSpeechRecognition()
+    stopAudioCapture()
+    setTimeout(runAnalysis, 800)
+  }
+
+  const handleReset = () => {
+    handleStop()
     setSegments([])
     setThreatData({ score: 0, category: 'Safe', flaggedPhrases: [], reasoning: '' })
     setAlertDismissed(false)
     setMicError(null)
     setBackendError(null)
-    setTranscriptionStatus(null)
-    setSrStatus(null)
     setInterimText('')
+    setLiveStatus(null)
     setDuration(0)
     setSegmentCount(0)
-    firstSegmentRef.current = false
     fullTranscriptRef.current = ''
+    firstSegmentRef.current = false
   }
 
-  // ─── Upload result handler ──────────────────────────────────────────────────
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopSpeechRecognition()
+      stopAudioCapture()
+    }
+  }, [stopSpeechRecognition, stopAudioCapture])
+
   const handleUploadResult = (data, fileName) => {
     setUploadResult(data)
     setUploadFileName(fileName)
@@ -170,12 +312,11 @@ export default function App() {
     return `${m}:${sec}`
   }
 
-  // Determine which threat data to show in the right panel
   const displayThreat = activeTab === 'upload' && uploadResult ? uploadResult : threatData
 
   return (
     <div className="app">
-      {/* ─── Header ─────────────────────────────────────────────────────────── */}
+      {/* Header */}
       <header className="header">
         <div className="header-brand">
           <div className="header-icon">🛡️</div>
@@ -190,46 +331,36 @@ export default function App() {
         </div>
       </header>
 
-      {/* ─── Alert Banner ───────────────────────────────────────────────────── */}
+      {/* Alert Banner */}
       {!alertDismissed && (
         <AlertBanner score={displayThreat.score} category={displayThreat.category} onDismiss={() => setAlertDismissed(true)} />
       )}
 
-      {/* ─── Mic error ──────────────────────────────────────────────────────── */}
+      {/* Mic error */}
       {micError && (
         <div className="alert-banner" style={{ borderColor: 'rgba(245,158,11,0.4)', background: 'rgba(245,158,11,0.1)' }}>
           <span className="alert-icon">⚠️</span>
           <div className="alert-text">
             <div className="alert-title" style={{ color: 'var(--suspicious-color)' }}>Microphone Error</div>
-            <div className="alert-desc" style={{ color: 'rgba(245,158,11,0.75)' }}>{micError}</div>
+            <div className="alert-desc">{micError}</div>
           </div>
           <button className="alert-dismiss" onClick={() => setMicError(null)}>✕</button>
         </div>
       )}
 
-      {/* ─── Backend transcription warning (soft) ──────────────────────────────── */}
+      {/* Backend error */}
       {backendError && isRecording && (
         <div className="alert-banner" style={{ borderColor: 'rgba(156,163,175,0.35)', background: 'rgba(156,163,175,0.06)' }}>
           <span className="alert-icon">ℹ️</span>
           <div className="alert-text">
-            <div className="alert-title" style={{ color: 'var(--text-primary)' }}>AI Transcription Issue</div>
+            <div className="alert-title">Transcription Note</div>
             <div className="alert-desc">{backendError}</div>
           </div>
           <button className="alert-dismiss" onClick={() => setBackendError(null)}>✕</button>
         </div>
       )}
 
-      {/* ─── Transcription in-progress indicator ──────────────────────────────── */}
-      {transcriptionStatus && isRecording && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 20px',
-          background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
-          fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-          <span style={{ animation: 'spin 1s linear infinite', display: 'inline-block' }}>⏳</span>
-          {transcriptionStatus}
-        </div>
-      )}
-
-      {/* ─── Stats Row ──────────────────────────────────────────────────────── */}
+      {/* Stats Row */}
       <div className="stats-row">
         <div className="stat-card">
           <div className="stat-value">{formatDuration(duration)}</div>
@@ -247,27 +378,18 @@ export default function App() {
         </div>
       </div>
 
-      {/* ─── Tabs ───────────────────────────────────────────────────────────── */}
+      {/* Tabs */}
       <div className="tabs">
-        <button
-          id="tab-live"
-          className={`tab-btn ${activeTab === 'live' ? 'active' : ''}`}
-          onClick={() => setActiveTab('live')}
-        >
+        <button id="tab-live" className={`tab-btn ${activeTab === 'live' ? 'active' : ''}`} onClick={() => setActiveTab('live')}>
           🎙️ Live Monitoring
         </button>
-        <button
-          id="tab-upload"
-          className={`tab-btn ${activeTab === 'upload' ? 'active' : ''}`}
-          onClick={() => setActiveTab('upload')}
-        >
+        <button id="tab-upload" className={`tab-btn ${activeTab === 'upload' ? 'active' : ''}`} onClick={() => setActiveTab('upload')}>
           📁 Analyze Audio File
         </button>
       </div>
 
-      {/* ─── Main Dashboard ─────────────────────────────────────────────────── */}
+      {/* Dashboard */}
       <div className="dashboard-grid">
-        {/* LEFT: Content switches by tab */}
         <div className="dashboard-left">
 
           {/* LIVE TAB */}
@@ -295,32 +417,26 @@ export default function App() {
               </div>
               <div className="card-body">
                 <TranscriptPanel segments={segments} flaggedPhrases={threatData.flaggedPhrases} />
-                {/* Live interim text — shows partial speech before it becomes a final segment */}
+
+                {/* Live interim text */}
                 {isRecording && interimText && (
-                  <div style={{
-                    padding: '10px 16px',
-                    marginTop: '8px',
-                    borderRadius: 'var(--radius-sm)',
-                    background: 'var(--bg-secondary)',
-                    border: '1px dashed var(--border-bright)',
-                    fontSize: '0.85rem',
-                    color: 'var(--text-muted)',
-                    fontStyle: 'italic',
-                  }}>
+                  <div style={{ padding: '8px 14px', marginTop: '6px', borderRadius: 'var(--radius-sm)',
+                    background: 'var(--bg-secondary)', border: '1px dashed var(--border)',
+                    fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
                     {interimText}
                   </div>
                 )}
-                {/* SR status indicator */}
-                {isRecording && !interimText && (
+
+                {/* Status indicator */}
+                {isRecording && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px',
                     fontSize: '0.78rem', color: 'var(--text-muted)' }}>
                     <span style={{
                       display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%',
-                      background: srStatus === 'listening' ? 'var(--safe-color)' : 'var(--text-muted)',
-                      animation: srStatus === 'listening' ? 'blink 1.5s ease infinite' : 'none',
+                      background: liveStatus === 'Listening…' ? 'var(--safe-color)' :
+                        liveStatus === 'Transcribing…' ? 'var(--suspicious-color)' : 'var(--text-muted)',
                     }} />
-                    {srStatus === 'listening' ? 'Listening for speech…' :
-                      srStatus === 'restarting' ? 'Restarting microphone…' : 'Initializing…'}
+                    {liveStatus || 'Initializing…'}
                   </div>
                 )}
               </div>
@@ -338,24 +454,14 @@ export default function App() {
               </div>
               <div className="card-body">
                 <AudioUpload onResult={handleUploadResult} />
-
-                {/* Show transcript from upload result */}
                 {uploadResult?.transcript && (
                   <div style={{ marginTop: '20px' }}>
                     <div className="card-title" style={{ marginBottom: '12px', fontSize: '0.78rem' }}>
                       <span>📝</span> TRANSCRIPT — {uploadFileName}
                     </div>
-                    <div style={{
-                      background: 'rgba(255,255,255,0.03)',
-                      border: '1px solid var(--border)',
-                      borderRadius: '10px',
-                      padding: '16px',
-                      fontSize: '0.88rem',
-                      lineHeight: '1.7',
-                      color: 'var(--text-primary)',
-                      maxHeight: '320px',
-                      overflowY: 'auto',
-                    }}>
+                    <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)',
+                      borderRadius: '10px', padding: '16px', fontSize: '0.88rem', lineHeight: '1.7',
+                      color: 'var(--text-primary)', maxHeight: '320px', overflowY: 'auto' }}>
                       {uploadResult.transcript}
                     </div>
                   </div>
@@ -365,7 +471,7 @@ export default function App() {
           )}
         </div>
 
-        {/* RIGHT: Threat panels (shared, shows whichever tab is active) */}
+        {/* RIGHT: Threat panels */}
         <div className="dashboard-right">
           <div className="card">
             <div className="card-header">
@@ -393,9 +499,9 @@ export default function App() {
         </div>
       </div>
 
-      {/* ─── Toasts ─────────────────────────────────────────────────────────── */}
+      {/* Toasts */}
       {backendOnline === false && (
-        <div className="connection-toast toast-disconnected">⚠️ Backend offline — start the server on port 4000</div>
+        <div className="connection-toast toast-disconnected">⚠️ Backend offline — check server connection</div>
       )}
       {backendOnline === true && !isRecording && segments.length === 0 && activeTab === 'live' && (
         <div className="connection-toast toast-connected">✓ Backend connected — ready to monitor</div>
