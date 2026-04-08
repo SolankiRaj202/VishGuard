@@ -6,7 +6,7 @@ const multer = require('multer');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 
 const app = express();
 const server = http.createServer(app);
@@ -78,7 +78,15 @@ initializeUsage();
 function getActiveModel() {
   const key = apiKeys[currentKeyIndex];
   const genAI = new GoogleGenerativeAI(key);
-  return genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+  return genAI.getGenerativeModel({ 
+    model: 'gemini-2.5-flash',
+    safetySettings: [
+      { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
+      { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE }
+    ]
+  });
 }
 
 function ensureValidKey() {
