@@ -257,13 +257,30 @@ export default function App() {
     // Wake Render backend
     try { await fetch(`${BACKEND_URL}/health`) } catch (_) {}
 
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-      streamRef.current = stream
-      setIsRecording(true)
-      setLiveStatus('Listening…')
-      startSpeechRecognition()
-      startAudioCapture()
+      if (SR) {
+        // Request microphone permission to ensure it's granted
+        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        // Immediately release the microphone because Android allows only one audio capture session,
+        // and Speech Recognition needs exclusive control.
+        tempStream.getTracks().forEach(t => t.stop())
+        await new Promise(resolve => setTimeout(resolve, 300)) // Give Android OS time to free the mic lock
+        
+        isRecordingRef.current = true // forcefully update ref before start
+        setIsRecording(true)
+        setLiveStatus('Listening…')
+        startSpeechRecognition()
+      } else {
+        // Fallback for browsers without SpeechRecognition
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+        streamRef.current = stream
+        isRecordingRef.current = true // forcefully update ref before start
+        setIsRecording(true)
+        setLiveStatus('Listening…')
+        startAudioCapture()
+      }
     } catch (err) {
       setMicError('Microphone access denied. Please allow microphone permissions and reload.')
       setLiveStatus(null)
@@ -271,6 +288,7 @@ export default function App() {
   }
 
   const handleStop = () => {
+    isRecordingRef.current = false // forcefully update ref to stop restart loops
     setIsRecording(false)
     setLiveStatus(null)
     stopSpeechRecognition()
