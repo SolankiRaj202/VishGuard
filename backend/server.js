@@ -181,6 +181,8 @@ Respond with valid JSON only — no markdown fences, no extra text.`;
 // ─── Helper: parse AI JSON response ──────────────────────────────────────────
 function parseAIResponse(text) {
   const jsonString = text
+    .replace(/<think>[\s\S]*?<\/think>/i, '') // Remove <think>...</think> blocks
+    .trim()
     .replace(/^```json\s*/i, '')
     .replace(/^```\s*/i, '')
     .replace(/```\s*$/i, '')
