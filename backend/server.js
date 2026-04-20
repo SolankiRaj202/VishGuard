@@ -79,7 +79,7 @@ function getActiveModel() {
   const key = apiKeys[currentKeyIndex];
   const genAI = new GoogleGenerativeAI(key);
   return genAI.getGenerativeModel({ 
-    model: 'gemini-2.5-flash',
+    model: 'gemini-1.5-flash',
     safetySettings: [
       { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
       { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -129,6 +129,19 @@ async function executeWithKeyRotation(generateFn) {
 
       return await generateFn(model);
     } catch (err) {
+      if (err.status === 503) {
+        console.warn(`[API] 503 Service Unavailable. Retrying immediately out of rotate loop...`);
+        // We will just do a tiny backoff and retry the same active key once
+        await new Promise(r => setTimeout(r, 1500));
+        try {
+          return await generateFn(model);
+        } catch (retryErr) {
+          keyUsage[currentKeyIndex].count--;
+          saveUsage();
+          throw retryErr;
+        }
+      }
+
       const isQuotaError = err.status === 429 || (err.message && err.message.toLowerCase().includes('quota'));
       if (isQuotaError) {
         console.warn(`[API Key Rotation] Key index ${currentKeyIndex} hit Google hard quota/429. Rotating to next key...`);
