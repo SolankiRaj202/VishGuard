@@ -8,7 +8,7 @@ import AudioUpload from './components/AudioUpload'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000'
 const ANALYSIS_INTERVAL_MS = 20000  // analyze every 20s
-const CHUNK_INTERVAL_MS = 8000      // send audio every 8s
+const CHUNK_INTERVAL_MS = 15000     // send audio every 15s to give LLM enough context
 
 // Pick best MIME for current device
 function getBestMimeType() {
@@ -178,13 +178,8 @@ export default function App() {
 
   const stopSpeechRecognition = useCallback(() => {
     if (srRestartRef.current) clearTimeout(srRestartRef.current)
-    setInterimText('')
     if (recognitionRef.current) {
-      recognitionRef.current.onend = null
-      recognitionRef.current.onerror = null
-      recognitionRef.current.onresult = null
-      try { recognitionRef.current.stop() } catch (_) {}
-      recognitionRef.current = null
+      try { recognitionRef.current.stop() } catch (_) {} // Allows final onresult to flush organically
     }
   }, [])
 
@@ -241,12 +236,15 @@ export default function App() {
 
   const stopAudioCapture = useCallback(() => {
     if (mediaRecorderRef.current?.state !== 'inactive') {
-      try { mediaRecorderRef.current.stop() } catch (_) {}
+      try { mediaRecorderRef.current.stop() } catch (_) {} // triggers final ondataavailable
     }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop())
-      streamRef.current = null
-    }
+    // Give browser 1000ms to flush the blob before severing the track
+    setTimeout(() => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop())
+        streamRef.current = null
+      }
+    }, 1000)
   }, [])
 
   // ─── Start / Stop handlers ────────────────────────────────────────────────
