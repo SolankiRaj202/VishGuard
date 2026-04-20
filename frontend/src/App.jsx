@@ -53,6 +53,8 @@ export default function App() {
   const durationRef = useRef(null)
   const analysisRef = useRef(null)
   const isRecordingRef = useRef(false)
+  const wakeLockRef = useRef(null)
+  const srFlushIntervalRef = useRef(null)
   isRecordingRef.current = isRecording
 
   // Recorder refs
@@ -140,7 +142,13 @@ export default function App() {
     r.interimResults = true
     r.maxAlternatives = 1
 
-    r.onstart = () => setLiveStatus('Listening…')
+    r.onstart = () => {
+      setLiveStatus('Listening…')
+      if (srFlushIntervalRef.current) clearInterval(srFlushIntervalRef.current)
+      srFlushIntervalRef.current = setInterval(() => {
+        try { recognitionRef.current?.stop() } catch (_) {}
+      }, 15000)
+    }
 
     r.onresult = (e) => {
       let interim = ''
@@ -163,6 +171,7 @@ export default function App() {
     }
 
     r.onend = () => {
+      if (srFlushIntervalRef.current) clearInterval(srFlushIntervalRef.current)
       setInterimText('')
       if (isRecordingRef.current) {
         srRestartRef.current = setTimeout(startSpeechRecognition, 300)
@@ -252,6 +261,14 @@ export default function App() {
     setMicError(null)
     firstSegmentRef.current = false
     setLiveStatus('Connecting…')
+
+    // Acquire Screen Wake Lock to prevent mobile OS hibernation
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLockRef.current = await navigator.wakeLock.request('screen')
+      }
+    } catch (_) {}
+
     // Wake Render backend
     try { await fetch(`${BACKEND_URL}/health`) } catch (_) {}
 
@@ -291,6 +308,11 @@ export default function App() {
     setLiveStatus(null)
     stopSpeechRecognition()
     stopAudioCapture()
+    if (srFlushIntervalRef.current) clearInterval(srFlushIntervalRef.current)
+    if (wakeLockRef.current) {
+      try { wakeLockRef.current.release() } catch (_) {}
+      wakeLockRef.current = null
+    }
     setTimeout(runAnalysis, 800)
   }
 
@@ -314,6 +336,10 @@ export default function App() {
     return () => {
       stopSpeechRecognition()
       stopAudioCapture()
+      if (srFlushIntervalRef.current) clearInterval(srFlushIntervalRef.current)
+      if (wakeLockRef.current) {
+        try { wakeLockRef.current.release() } catch (_) {}
+      }
     }
   }, [stopSpeechRecognition, stopAudioCapture])
 
