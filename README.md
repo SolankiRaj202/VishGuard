@@ -1,8 +1,8 @@
 # 🛡️ VishGuard — AI-Powered Call Threat Detector
 
-> **Real-time voice phishing (vishing) and scam detection powered by Google Gemini AI.**
+> **Real-time voice phishing (vishing) and scam detection powered by a cloud AI engine.**
 
-VishGuard actively monitors phone calls using your device's browser, transcribes speech in real time, and uses **Google Gemini 2.5 Flash Lite** to detect social engineering threats, urgency tactics, and requests for sensitive information — completely free, with no paid subscriptions required.
+VishGuard actively monitors phone calls using your device's browser, transcribes speech in real time, and uses a **cloud AI engine** to detect social engineering threats, urgency tactics, and requests for sensitive information — completely free, with no paid subscriptions required.
 
 ---
 
@@ -17,7 +17,7 @@ VishGuard actively monitors phone calls using your device's browser, transcribes
 
 ### 📁 Audio File Upload & Analysis
 - Upload a recorded call in **MP3, MP4, WAV, WebM, OGG, M4A, FLAC, or AAC** format.
-- The backend sends the audio directly to Gemini, which simultaneously **transcribes** and **threat-scores** the recording in one pass.
+- The backend sends the audio directly to the AI engine, which simultaneously **transcribes** and **threat-scores** the recording in one pass.
 - Full transcript and threat assessment are displayed side-by-side.
 
 ### 🎨 Monochromatic Console UI
@@ -29,12 +29,12 @@ VishGuard actively monitors phone calls using your device's browser, transcribes
 | Feature | Detail |
 |---|---|
 | **AI Model** | `gemini-2.5-flash-lite` with all safety filters set to `BLOCK_NONE` to allow analysis of sensitive vishing transcripts |
-| **API Key Pool** | Supports an unlimited number of Gemini API keys, comma-separated in `.env` |
+| **API Key Pool** | Supports an unlimited number of AI API keys, comma-separated in `.env` |
 | **Key Rotation** | Automatically rotates to the next key on a Google hard-quota `429` error |
 | **Daily Cap** | Each key is hard-capped at **19 requests/day** (configurable via `DAILY_LIMIT`) to prevent surprise billing |
 | **Quota Persistence** | Usage counters are stored in `usage.json` (keyed by index, never by key string) and reset automatically each calendar day |
 | **Admin Dashboard** | `GET /admin-tracker` — a live progress-bar UI showing usage health for every configured key |
-| **503 Retry** | Single automatic retry with 1.5 s backoff on Gemini service unavailability |
+| **503 Retry** | Single automatic retry with 1.5 s backoff on AI service unavailability |
 
 ---
 
@@ -50,7 +50,7 @@ VishGuard actively monitors phone calls using your device's browser, transcribes
 │                                 │      │  GET  /health                          │
 │  Screen Wake Lock API           │      │  GET  /admin-tracker                  │
 │  (prevents sleep on mobile)     │      │         ↓                              │
-└─────────────────────────────────┘      │  Google Gemini 2.5 Flash Lite API     │
+└─────────────────────────────────┘      │  Cloud AI Engine (threat analysis)    │
                                          └──────────────────────────────────────┘
 ```
 
@@ -75,7 +75,7 @@ VishGuard actively monitors phone calls using your device's browser, transcribes
 | `GET` | `/health` | — | Returns `{ "status": "ok" }`. Used for backend connectivity checks. |
 | `GET` | `/admin-tracker` | — | HTML dashboard showing daily quota usage for all configured API keys. |
 | `POST` | `/analyze` | `{ transcript: string }` | Analyzes a live call transcript. Returns threat JSON. |
-| `POST` | `/analyze-audio` | `multipart/form-data` — field `audio` | Transcribes **and** analyzes an uploaded audio file in one Gemini call. |
+| `POST` | `/analyze-audio` | `multipart/form-data` — field `audio` | Transcribes **and** analyzes an uploaded audio file in a single AI call. |
 | `POST` | `/transcribe` | `multipart/form-data` — field `audio` | Transcribes a raw audio chunk (text only, no threat scoring). |
 
 ### Threat Analysis Response Shape
@@ -99,7 +99,7 @@ VishGuard actively monitors phone calls using your device's browser, transcribes
 
 ### Prerequisites
 - Node.js 18+
-- A free [Google AI Studio](https://aistudio.google.com/) account for Gemini API keys
+- An AI API key (the project uses a free-tier cloud AI provider — see `backend/.env.example` for details)
 
 ### 1. Clone & set up the backend
 
@@ -111,7 +111,7 @@ npm install
 Create `backend/.env`:
 
 ```env
-# Comma-separated Gemini API keys (1 or more)
+# Comma-separated AI API keys (1 or more)
 API_KEYS=AIza...,AIza...
 PORT=4000
 ```
@@ -172,7 +172,7 @@ The React app will be live at `http://localhost:5173`.
 1. Push the repo to GitHub.
 2. Connect it to [Render](https://render.com). The `render.yaml` file auto-configures everything.
 3. In the Render dashboard, go to **Environment → Environment Variables** and add:
-   - `API_KEYS` = your comma-separated Gemini API keys
+   - `API_KEYS` = your comma-separated AI API keys
 4. Deploy. Render will assign you a public URL like `https://vishguard-backend.onrender.com`.
 
 ### Frontend → GitHub Pages
@@ -209,7 +209,7 @@ VishGuard/
 │   ├── server.js               # Express server: all API routes + key rotation logic
 │   ├── package.json
 │   ├── usage.json              # Auto-generated: daily API key usage counters
-│   ├── check_models.js         # Utility: list available Gemini models
+│   ├── check_models.js         # Utility: list available AI models
 │   ├── test_ai.js              # Smoke test: basic AI connectivity
 │   ├── test_safe.js            # Test: safe transcript analysis
 │   ├── test_unsafe.js          # Test: high-risk transcript detection

@@ -4,7 +4,7 @@
 
 **VishGuard** is a free, open-source, real-time call threat detection system designed to protect individuals from **voice phishing (vishing)** — a form of social engineering where attackers impersonate trusted organisations (banks, government agencies, tech support) over the phone to steal sensitive information.
 
-VishGuard runs entirely in a web browser. It listens to your phone call in real time, transcribes the conversation on-device, and uses Google's Gemini AI to continuously score the call for threat indicators — all without requiring any app installation, subscription, or paid plan.
+VishGuard runs entirely in a web browser. It listens to your phone call in real time, transcribes the conversation on-device, and uses a **cloud AI engine** to continuously score the call for threat indicators — all without requiring any app installation, subscription, or paid plan.
 
 ---
 
@@ -42,7 +42,7 @@ VishGuard was built to fill this gap.
 ┌──────────────────────────────────────────────────────────────────┐
 │                     VishGuard Backend (Node.js)                    │
 │                                                                    │
-│   Google Gemini 2.5 Flash Lite analyses transcript for:            │
+│   Cloud AI engine analyses transcript for:              │
 │    • Impersonation of trusted organisations                        │
 │    • Urgency / fear / authority pressure tactics                   │
 │    • Requests for OTP, PIN, account numbers, passwords             │
@@ -69,7 +69,7 @@ VishGuard was built to fill this gap.
 |--------|-----------|
 | **Browser Web Speech API** for transcription | Zero latency, on-device, no audio upload required, works on Android Chrome & iOS Safari |
 | **Screen Wake Lock API** | Prevents mobile OS from sleeping mid-call, ensuring long calls (30+ min) are fully captured |
-| **Gemini 2.5 Flash Lite** | Free-tier API, low latency, strong reasoning on conversational text, multimodal (handles audio file uploads too) |
+| **Cloud AI engine** | Free-tier API, low latency, strong reasoning on conversational text, multimodal (handles audio file uploads too) |
 | **API key pool with rotation** | Allows the free-tier daily quota to scale linearly with the number of keys configured — no paid tier needed |
 | **GitHub Pages + Render free tier** | Zero ongoing hosting cost |
 | **No database** | `usage.json` is the only persistence layer — no setup overhead |
@@ -119,7 +119,7 @@ VishGuard classifies calls into six categories:
 | Speech recognition | Web Speech API (`SpeechRecognition`) |
 | Screen sleep prevention | Screen Wake Lock API |
 | Backend runtime | Node.js + Express 4 |
-| AI model | Google Gemini 2.5 Flash Lite |
+| AI model | Cloud AI engine |
 | AI client | `@google/generative-ai` SDK |
 | Audio upload handling | Multer |
 | Frontend hosting | GitHub Pages (free) |

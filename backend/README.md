@@ -7,7 +7,7 @@ Express API server that handles AI-powered threat analysis for the VishGuard fro
 | Package | Version | Purpose |
 |---------|---------|---------|
 | express | ^4.18.3 | HTTP server & routing |
-| @google/generative-ai | ^0.24.1 | Gemini AI client |
+| @google/generative-ai | ^0.24.1 | Cloud AI client |
 | multer | ^1.4.5-lts.1 | Multipart audio file uploads |
 | cors | ^2.8.5 | Cross-origin request headers |
 | dotenv | ^16.4.5 | `.env` file loader |
@@ -22,7 +22,7 @@ npm install
 Create a `.env` file:
 
 ```env
-# One or more Gemini API keys, comma-separated.
+# One or more AI API keys, comma-separated.
 # Aliases: GEMINI_API_KEYS or GEMINI_API_KEY also work.
 API_KEYS=AIza...,AIza...
 
@@ -72,7 +72,7 @@ Analyzes a text transcript for vishing threats.
 Score thresholds: `0–29` Safe · `30–69` Suspicious · `70–100` High Risk
 
 ### `POST /analyze-audio`
-Transcribes **and** threat-analyzes an uploaded audio file in a single Gemini call.
+Transcribes **and** threat-analyzes an uploaded audio file in a single AI call.
 
 **Request:** `multipart/form-data` with field `audio` (MP3, MP4, WAV, WebM, OGG, M4A, FLAC, AAC).
 
@@ -113,7 +113,7 @@ Edit `DAILY_LIMIT` at the top of `server.js` (default: `19`).
 
 ---
 
-## Gemini Model
+## AI Engine
 
 The backend uses **`gemini-2.5-flash-lite`** with all safety filter thresholds set to `BLOCK_NONE`. This is necessary because vishing transcripts naturally contain language that would otherwise trigger content filters (threats, urgency, sensitive data requests).
 
@@ -123,11 +123,11 @@ The backend uses **`gemini-2.5-flash-lite`** with all safety filter thresholds s
 
 | Script | Purpose |
 |--------|---------|
-| `node test_ai.js` | Basic Gemini connectivity smoke test |
+| `node test_ai.js` | Basic AI connectivity smoke test |
 | `node test_safe.js` | Send a benign transcript and assert a low score |
 | `node test_unsafe.js` | Send a vishing transcript and assert a high score |
 | `node test_all.js` | Run all three tests in sequence |
-| `node check_models.js` | List all Gemini models accessible with your first key |
+| `node check_models.js` | List all AI models accessible with your first key |
 
 ---
 
