@@ -1,3 +1,13 @@
+# Render.com deployment configuration for VishGuard backend.
+# Push to main/master → Render auto-builds and deploys.
+#
+# Setup:
+#   1. Connect this repo to Render (render.com → New Web Service → GitHub).
+#   2. Render will detect this file and pre-fill all settings automatically.
+#   3. In the Render dashboard, go to Environment → Environment Variables and add:
+#        API_KEYS = AIza...,AIza...   (comma-separated Gemini API keys)
+#   4. Deploy. Your backend URL will be: https://vishguard-backend.onrender.com
+
 services:
   - type: web
     name: vishguard-backend
@@ -7,7 +17,7 @@ services:
     buildCommand: npm install
     startCommand: node server.js
     envVars:
-      - key: GEMINI_API_KEYS
-        sync: false   # Paste your comma-separated API keys manually in the Render dashboard
+      - key: API_KEYS
+        sync: false   # Set your comma-separated Gemini API keys in the Render dashboard — NEVER commit them to git
       - key: PORT
         value: 4000

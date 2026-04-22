@@ -4,13 +4,36 @@ import { useEffect, useRef, useCallback } from 'react'
 /**
  * useSpeechRecognition
  *
- * Mobile-safe Web Speech API hook.
- * Handles:
- *  - Auto-restart after natural end (Android Chrome stops after silence)
- *  - Silent error recovery (no-speech, network, audio-capture)
- *  - Strict mic permission error propagation (not-allowed)
- *  - Page visibility re-start (screen-on after lock)
- *  - Clean teardown on unmount / stop
+ * A mobile-safe React hook that wraps the browser's Web Speech API
+ * (`SpeechRecognition` / `webkitSpeechRecognition`).
+ *
+ * ## Why a custom hook?
+ * The native API has several rough edges on mobile:
+ *  - Android Chrome **stops automatically** after a pause in speech, requiring
+ *    manual restart via `onend`.
+ *  - `not-allowed` (mic denied) is permanent and must be surfaced to the user,
+ *    while transient errors (`no-speech`, `network`, `audio-capture`, `aborted`)
+ *    should be silently retried.
+ *  - If the screen locks mid-call the recognition session silently dies; we
+ *    re-start it on `visibilitychange` when the screen turns back on.
+ *
+ * ## Usage
+ * ```jsx
+ * useSpeechRecognition({
+ *   isRecording,          // boolean — controls start/stop
+ *   onSegment,            // ({ text, timestamp }) => void — called for each final result
+ *   onInterim,            // (string) => void — live partial text (clears on session end)
+ *   onError,              // (string) => void — user-facing error message
+ *   onStatusChange,       // ('listening' | 'restarting' | null) => void
+ * })
+ * ```
+ *
+ * @param {object}   options
+ * @param {boolean}  options.isRecording    - When true the hook starts recognition; false stops it.
+ * @param {Function} options.onSegment      - Called with `{ text, timestamp }` for each final transcript segment.
+ * @param {Function} [options.onInterim]    - Called with the current interim (partial) transcript string.
+ * @param {Function} [options.onError]      - Called with a user-friendly error message string on permanent errors.
+ * @param {Function} [options.onStatusChange] - Called with `'listening'`, `'restarting'`, or `null`.
  */
 export default function useSpeechRecognition({
   isRecording,
@@ -25,6 +48,11 @@ export default function useSpeechRecognition({
   isRecordingRef.current = isRecording
 
   // ── Teardown helper ───────────────────────────────────────────────────────
+  /**
+   * Nulls out all event handlers and aborts the current recognition session.
+   * Handlers are cleared first to prevent the `onend` callback from triggering
+   * another unwanted restart cycle after an explicit stop.
+   */
   const stopRecognition = useCallback(() => {
     if (restartTimeoutRef.current) {
       clearTimeout(restartTimeoutRef.current)
@@ -42,6 +70,14 @@ export default function useSpeechRecognition({
   }, [])
 
   // ── Core recognition starter ──────────────────────────────────────────────
+  /**
+   * Creates and starts a new SpeechRecognition instance.
+   * - `continuous = true` is set, but Android may still fire `onend` after
+   *   silence — the `onend` handler re-calls `startRecognition` after 300 ms.
+   * - `interimResults = true` enables live partial results via `onInterim`.
+   * - Language is intentionally NOT forced (`recognition.lang`) so the device
+   *   uses its OS locale, giving accurate results for multilingual users.
+   */
   const startRecognition = useCallback(() => {
     if (!isRecordingRef.current) return
 
@@ -159,6 +195,11 @@ export default function useSpeechRecognition({
   }, [isRecording])
 
   // ── Effect: re-start when page becomes visible (screen unlock on mobile) ──
+  /**
+   * When the mobile screen locks and then turns back on, the recognition
+   * session will have silently died. We listen for `visibilitychange` and
+   * force a fresh restart with a 400 ms delay to let the OS settle.
+   */
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && isRecordingRef.current) {

@@ -1,11 +1,14 @@
 name: Deploy Frontend to GitHub Pages
 
+# Triggers: auto on push to main/master, or manually from the Actions tab.
+# Prerequisite: Set the repository secret VITE_BACKEND_URL to your Render backend URL.
+#   GitHub repo → Settings → Secrets and variables → Actions → New repository secret
+#   Name:  VITE_BACKEND_URL
+#   Value: https://vishguard-backend.onrender.com   (your Render URL)
+
 on:
-  # Runs on pushes targeting the default branch
   push:
     branches: ["main", "master"]
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 # Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
@@ -14,42 +17,50 @@ permissions:
   pages: write
   id-token: write
 
-# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
-# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+# Allow only one concurrent deployment, skipping runs queued between the
+# run in-progress and latest queued. Do NOT cancel in-progress runs — we
+# want production deployments to complete.
 concurrency:
   group: "pages"
   cancel-in-progress: false
 
 jobs:
-  # Build job
+  # ── Build ──────────────────────────────────────────────────────────────────
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Setup Node
+
+      - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
-      - name: Setup Pages
+
+      - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
-      - name: Install dependencies
+
+      - name: Install frontend dependencies
         working-directory: ./frontend
         run: npm ci
-      - name: Build
+
+      - name: Build frontend
         working-directory: ./frontend
-        # Inject the VITE_BACKEND_URL during build time
+        # VITE_BACKEND_URL is injected from a GitHub Actions secret at build time.
+        # The value is baked into the static bundle — it is NOT exposed at runtime.
         run: npm run build
         env:
           VITE_BACKEND_URL: ${{ secrets.VITE_BACKEND_URL }}
-      - name: Upload artifact
+
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
+          # Vite outputs to ./frontend/dist — this becomes the Pages root.
           path: './frontend/dist'
 
-  # Deployment job
+  # ── Deploy ─────────────────────────────────────────────────────────────────
   deploy:
     environment:
       name: github-pages
