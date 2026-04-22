@@ -38,13 +38,25 @@ body {
   color: var(--text-primary);
   min-height: 100vh;
   overflow-x: hidden;
+  /* Prevent iOS rubber-band overscroll that can confuse touch events */
+  overscroll-behavior-y: contain;
+  /* Remove tap highlight flash on Android/iOS */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Globally remove 300ms tap delay on all interactive elements */
+a, button, [role="button"], input, label, select, textarea {
+  touch-action: manipulation;
 }
 
 /* ─── App Layout ─────────────────────────────────────────────────────────────── */
 .app {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 24px 20px 48px;
+  /* env(safe-area-inset-*) pads away from iPhone notch / home-indicator */
+  padding: calc(24px + env(safe-area-inset-top)) 20px calc(48px + env(safe-area-inset-bottom));
+  padding-left: max(20px, env(safe-area-inset-left));
+  padding-right: max(20px, env(safe-area-inset-right));
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -180,21 +192,32 @@ body {
 .btn-start {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
-  padding: 14px 28px;
+  /* 44px min-height satisfies Apple/Google touch-target accessibility guideline */
+  min-height: 44px;
+  padding: 12px 28px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm);
   font-family: 'Inter', sans-serif;
   font-size: 0.95rem;
   font-weight: 600;
   cursor: pointer;
+  touch-action: manipulation;
   transition: var(--transition);
   background: var(--accent-primary);
   color: var(--accent-invert);
+  /* Prevent text selection on long-press on mobile */
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .btn-start:hover {
   background: var(--accent-primary-hover);
+}
+
+.btn-start:active {
+  transform: scale(0.97);
 }
 
 .btn-stop {
@@ -209,7 +232,8 @@ body {
 }
 
 .btn-reset {
-  padding: 14px 20px;
+  min-height: 44px;
+  padding: 12px 20px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: transparent;
@@ -218,13 +242,20 @@ body {
   font-size: 0.88rem;
   font-weight: 500;
   cursor: pointer;
+  touch-action: manipulation;
   transition: var(--transition);
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .btn-reset:hover {
   border-color: var(--border-bright);
   color: var(--text-primary);
   background: var(--bg-card-hover);
+}
+
+.btn-reset:active {
+  transform: scale(0.97);
 }
 
 .recording-indicator {
@@ -531,6 +562,7 @@ body {
 
 .tab-btn {
   flex: 1;
+  min-height: 44px;
   padding: 10px 20px;
   border: none;
   border-radius: var(--radius-sm);
@@ -538,12 +570,16 @@ body {
   font-size: 0.88rem;
   font-weight: 600;
   cursor: pointer;
+  touch-action: manipulation;
   transition: var(--transition);
   color: var(--text-muted);
   background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .tab-btn:hover { color: var(--text-secondary); background: var(--bg-card); }
+.tab-btn:active { transform: scale(0.98); }
 
 .tab-btn.active {
   background: var(--accent-primary);
@@ -597,22 +633,54 @@ body {
 }
 
 @media (max-width: 650px) {
-  .card-header { flex-direction: column; align-items: flex-start; gap: 16px; }
-  .control-panel { width: 100%; flex-wrap: wrap; gap: 12px; }
-  .btn-start, .btn-reset, .recording-indicator { flex: 1; justify-content: center; text-align: center; box-sizing: border-box; }
+  .card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 14px 16px 12px;
+  }
+  .control-panel {
+    width: 100%;
+    display: grid;
+    /* Start/Stop takes left column, Reset takes right column */
+    grid-template-columns: 1fr auto;
+    gap: 10px;
+    align-items: center;
+  }
+  /* Recording indicator spans full width above the buttons */
+  .recording-indicator {
+    grid-column: 1 / -1;
+    justify-content: center;
+  }
+  .btn-start { width: 100%; }
+  .btn-reset { min-width: 80px; white-space: nowrap; }
   .tabs { flex-direction: column; }
   .stats-row { grid-template-columns: repeat(3, 1fr); gap: 10px; }
   .stat-card { padding: 12px 10px; }
   .stat-value { font-size: 1.2rem; }
+  .card-body { padding: 16px; }
 }
 
 @media (max-width: 500px) {
-  .app { padding: 16px 12px 48px; }
-  .stats-row { grid-template-columns: 1fr; }
-  .header { flex-direction: column; gap: 16px; align-items: center; text-align: center; padding: 24px 20px; }
-  .header-brand { flex-direction: column; gap: 12px; }
+  /* Override safe-area padding for small phones so it doesn't double-apply */
+  .app {
+    padding-top: max(16px, env(safe-area-inset-top));
+    padding-bottom: max(48px, env(safe-area-inset-bottom));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+  .stats-row { grid-template-columns: repeat(3, 1fr); }
+  .header { flex-direction: column; gap: 14px; align-items: center; text-align: center; padding: 20px 16px; }
+  .header-brand { flex-direction: column; gap: 10px; }
   .threat-score-row { flex-direction: column; align-items: center; text-align: center; gap: 12px; }
-  .threat-score-value { font-size: 4rem; }
-  .alert-banner { flex-direction: column; text-align: center; padding: 20px; }
+  .threat-score-value { font-size: 3.5rem; }
+  .alert-banner { flex-direction: column; text-align: center; padding: 16px; }
   .alert-dismiss { position: absolute; top: 10px; right: 10px; }
+  /* Ensure connection toast doesn't clip on notch phones */
+  .connection-toast {
+    bottom: max(24px, env(safe-area-inset-bottom));
+    right: max(16px, env(safe-area-inset-right));
+    left: max(16px, env(safe-area-inset-left));
+    justify-content: center;
+  }
 }

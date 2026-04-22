@@ -1,34 +1,78 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect, useRef, useCallback } from 'react'
 
-export default function useSpeechRecognition({ isRecording, onSegment, onInterim, onError, onStatusChange }) {
+/**
+ * useSpeechRecognition
+ *
+ * Mobile-safe Web Speech API hook.
+ * Handles:
+ *  - Auto-restart after natural end (Android Chrome stops after silence)
+ *  - Silent error recovery (no-speech, network, audio-capture)
+ *  - Strict mic permission error propagation (not-allowed)
+ *  - Page visibility re-start (screen-on after lock)
+ *  - Clean teardown on unmount / stop
+ */
+export default function useSpeechRecognition({
+  isRecording,
+  onSegment,
+  onInterim,
+  onError,
+  onStatusChange,
+}) {
   const recognitionRef = useRef(null)
   const restartTimeoutRef = useRef(null)
   const isRecordingRef = useRef(isRecording)
-  const interimRef = useRef('')
   isRecordingRef.current = isRecording
 
-  const startRecognition = useCallback(() => {
+  // ── Teardown helper ───────────────────────────────────────────────────────
+  const stopRecognition = useCallback(() => {
     if (restartTimeoutRef.current) {
       clearTimeout(restartTimeoutRef.current)
       restartTimeoutRef.current = null
     }
+    if (recognitionRef.current) {
+      // Null out handlers FIRST to prevent the onend restart loop from firing
+      recognitionRef.current.onstart = null
+      recognitionRef.current.onresult = null
+      recognitionRef.current.onerror = null
+      recognitionRef.current.onend = null
+      try { recognitionRef.current.abort() } catch (_) {}
+      recognitionRef.current = null
+    }
+  }, [])
+
+  // ── Core recognition starter ──────────────────────────────────────────────
+  const startRecognition = useCallback(() => {
     if (!isRecordingRef.current) return
 
+    // Bail early if SR not supported
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) return
 
-    // Always create fresh instance — avoids stale state issues on mobile
+    // Clean up any existing instance before creating a new one
+    if (recognitionRef.current) {
+      recognitionRef.current.onstart = null
+      recognitionRef.current.onresult = null
+      recognitionRef.current.onerror = null
+      recognitionRef.current.onend = null
+      try { recognitionRef.current.abort() } catch (_) {}
+    }
+
     const recognition = new SpeechRecognition()
     recognitionRef.current = recognition
 
+    // continuous=true means the browser won't auto-stop after a pause.
+    // On some Android builds, continuous mode has bugs — we handle restarts
+    // manually via onend instead of relying on it.
     recognition.continuous = true
-    recognition.interimResults = true  // show live partial text
+    recognition.interimResults = true
     recognition.maxAlternatives = 1
-    // Don't force en-US — let device use its own language/locale preference
-    // recognition.lang = 'en-US'
+    // Do NOT force recognition.lang — let device use its OS locale so that
+    // multilingual users get accurate results without any extra config.
 
-    onStatusChange?.('listening')
+    recognition.onstart = () => {
+      onStatusChange?.('listening')
+    }
 
     recognition.onresult = (event) => {
       let interim = ''
@@ -37,45 +81,46 @@ export default function useSpeechRecognition({ isRecording, onSegment, onInterim
         if (event.results[i].isFinal) {
           const finalText = text.trim()
           if (finalText) {
-            onSegment({ text: finalText, timestamp: new Date().toISOString() })
+            onSegment?.({ text: finalText, timestamp: new Date().toISOString() })
           }
           interim = ''
         } else {
           interim += text
         }
       }
-      interimRef.current = interim
-      onInterim?.(interim) // pass live partial text to UI
+      onInterim?.(interim)
     }
 
     recognition.onerror = (event) => {
-      // 'no-speech', 'network', 'audio-capture' errors are common on mobile — just restart silently
-      const ignoredErrors = ['aborted', 'no-speech', 'network', 'audio-capture']
-      if (!ignoredErrors.includes(event.error)) {
-        console.warn('[SpeechRecognition] Error:', event.error)
+      // These are normal transient errors on mobile — don't surface to user
+      const silentErrors = ['aborted', 'no-speech', 'network', 'audio-capture']
+      if (!silentErrors.includes(event.error)) {
+        console.warn('[SpeechRecognition] Unhandled error:', event.error)
       }
       if (event.error === 'not-allowed') {
-        onError?.('Microphone access denied. Please allow microphone permissions in your browser settings.')
+        // Permanent — user denied mic. Stop everything and notify.
+        onError?.('Microphone access denied. Please allow microphone permissions in your browser settings, then reload.')
         isRecordingRef.current = false
         onStatusChange?.(null)
+        stopRecognition()
       }
-    }
-
-    recognition.onstart = () => {
-      onStatusChange?.('listening')
+      // For all other errors, onend will fire and trigger the restart loop.
     }
 
     recognition.onend = () => {
-      onInterim?.('') // clear interim on end
+      // Always clear interim text when a recognition session ends
+      onInterim?.('')
+
       if (isRecordingRef.current) {
         onStatusChange?.('restarting')
-        // Restart quickly — 200ms is enough to avoid browser anti-spam throttle
+        // Delay restart slightly:
+        //  - 300ms prevents Chrome's "recognition already started" error
+        //  - Gives Android OS time to free internal audio buffers
         restartTimeoutRef.current = setTimeout(() => {
           if (isRecordingRef.current) {
-            onStatusChange?.('listening')
             startRecognition()
           }
-        }, 200)
+        }, 300)
       } else {
         onStatusChange?.(null)
       }
@@ -84,42 +129,46 @@ export default function useSpeechRecognition({ isRecording, onSegment, onInterim
     try {
       recognition.start()
     } catch (err) {
-      console.warn('[SpeechRecognition] Start failed:', err.message)
-      restartTimeoutRef.current = setTimeout(startRecognition, 500)
+      console.warn('[SpeechRecognition] start() threw:', err.message)
+      // Retry after a brief pause — usually caused by concurrent start() calls
+      restartTimeoutRef.current = setTimeout(() => {
+        if (isRecordingRef.current) startRecognition()
+      }, 500)
     }
-  }, [onSegment, onInterim, onError, onStatusChange])
+  }, [onSegment, onInterim, onError, onStatusChange, stopRecognition])
 
+  // ── Effect: start/stop when isRecording changes ───────────────────────────
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition
     if (!SpeechRecognition) {
-      onError?.('Live transcription is not supported in this browser. Please use Chrome on Android.')
+      onError?.('Live transcription is not supported in this browser. Please use Chrome on Android or Safari on iOS.')
       return
     }
 
     if (isRecording) {
       startRecognition()
     } else {
-      if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current)
+      stopRecognition()
       onInterim?.('')
       onStatusChange?.(null)
-      if (recognitionRef.current) {
-        recognitionRef.current.onend = null
-        recognitionRef.current.onerror = null
-        recognitionRef.current.onresult = null
-        try { recognitionRef.current.stop() } catch (_) {}
-        recognitionRef.current = null
-      }
     }
 
     return () => {
-      if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current)
-      if (recognitionRef.current) {
-        recognitionRef.current.onend = null
-        recognitionRef.current.onerror = null
-        recognitionRef.current.onresult = null
-        try { recognitionRef.current.stop() } catch (_) {}
-        recognitionRef.current = null
-      }
+      stopRecognition()
     }
   }, [isRecording])
+
+  // ── Effect: re-start when page becomes visible (screen unlock on mobile) ──
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isRecordingRef.current) {
+        // Recognition may have silently died while screen was locked
+        // Force a fresh restart
+        if (restartTimeoutRef.current) clearTimeout(restartTimeoutRef.current)
+        restartTimeoutRef.current = setTimeout(startRecognition, 400)
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [startRecognition])
 }

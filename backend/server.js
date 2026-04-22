@@ -8,6 +8,7 @@ const os = require('os');
 const path = require('path');
 const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
 
+
 const app = express();
 const server = http.createServer(app);
 
@@ -463,10 +464,32 @@ If the audio is silent or contains no legible speech, return {"transcript": ""}.
   }
 });
 
+// ─── Helper: get local network (LAN) IP ──────────────────────────────────────
+// Used to tell mobile users which IP to type in their phone browser.
+function getLanIP() {
+  const interfaces = os.networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name]) {
+      // Skip loopback (127.x) and IPv6 addresses
+      if (iface.family === 'IPv4' && !iface.internal) {
+        return iface.address;
+      }
+    }
+  }
+  return '(unknown LAN IP)';
+}
+
 // ─── Start server ─────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
-server.listen(PORT, () => {
-  console.log(`\n🚀 VishGuard Backend running on http://localhost:${PORT}`);
-  console.log(`   AI analysis engine ready`);
-  console.log(`   Health: http://localhost:${PORT}/health\n`);
+
+// Bind to 0.0.0.0 (all network interfaces) so phones on the same WiFi
+// can reach the backend directly using the laptop's LAN IP.
+server.listen(PORT, '0.0.0.0', () => {
+  const lanIP = getLanIP();
+  console.log(`\n🚀 VishGuard Backend running`);
+  console.log(`   Local:   http://localhost:${PORT}`);
+  console.log(`   Network: http://${lanIP}:${PORT}  ←  use this URL on your phone`);
+  console.log(`   Health:  http://${lanIP}:${PORT}/health`);
+  console.log(`\n📱 Mobile setup: set VITE_BACKEND_URL=http://${lanIP}:${PORT} in frontend/.env\n`);
 });
+

@@ -5,25 +5,10 @@ import AlertBanner from './components/AlertBanner'
 import TranscriptPanel from './components/TranscriptPanel'
 import AnalysisSummary from './components/AnalysisSummary'
 import AudioUpload from './components/AudioUpload'
+import useSpeechRecognition from './hooks/useSpeechRecognition'
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:4000'
-const ANALYSIS_INTERVAL_MS = 20000  // analyze every 20s
-const CHUNK_INTERVAL_MS = 15000     // send audio every 15s to give LLM enough context
-
-// Pick best MIME for current device
-function getBestMimeType() {
-  const types = [
-    'audio/webm;codecs=opus',
-    'audio/webm',
-    'audio/mp4',
-    'audio/ogg;codecs=opus',
-    'audio/ogg',
-  ]
-  for (const t of types) {
-    try { if (MediaRecorder.isTypeSupported(t)) return t } catch (_) {}
-  }
-  return ''
-}
+const ANALYSIS_INTERVAL_MS = 20000 // analyze every 20s
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('live')
@@ -35,7 +20,7 @@ export default function App() {
   const [alertDismissed, setAlertDismissed] = useState(false)
   const [micError, setMicError] = useState(null)
   const [backendError, setBackendError] = useState(null)
-  const [liveStatus, setLiveStatus] = useState(null)   // e.g. 'Listening…', 'Transcribing…'
+  const [liveStatus, setLiveStatus] = useState(null)
   const [interimText, setInterimText] = useState('')
   const [segmentCount, setSegmentCount] = useState(0)
   const [duration, setDuration] = useState(0)
@@ -54,14 +39,7 @@ export default function App() {
   const analysisRef = useRef(null)
   const isRecordingRef = useRef(false)
   const wakeLockRef = useRef(null)
-  const srFlushIntervalRef = useRef(null)
   isRecordingRef.current = isRecording
-
-  // Recorder refs
-  const mediaRecorderRef = useRef(null)
-  const streamRef = useRef(null)
-  const recognitionRef = useRef(null)
-  const srRestartRef = useRef(null)
 
   // ─── Check backend health ────────────────────────────────────────────────
   useEffect(() => {
@@ -109,13 +87,15 @@ export default function App() {
   }, [isRecording, runAnalysis])
 
   // ─── Add segment (deduped) ────────────────────────────────────────────────
-  const addSegment = useCallback((text) => {
-    const clean = text.trim()
+  const addSegment = useCallback((seg) => {
+    // seg can be { text, timestamp } object (from hook) or plain string (legacy)
+    const text = typeof seg === 'string' ? seg : seg?.text
+    const clean = (text || '').trim()
     if (!clean) return
     setSegments(prev => {
       const recent = prev.slice(-2).map(s => s.text.trim().toLowerCase())
       if (recent.includes(clean.toLowerCase())) return prev
-      return [...prev, { text: clean, timestamp: new Date().toISOString() }]
+      return [...prev, { text: clean, timestamp: seg?.timestamp || new Date().toISOString() }]
     })
     setSegmentCount(c => c + 1)
     fullTranscriptRef.current += ' ' + clean
@@ -125,194 +105,82 @@ export default function App() {
     }
   }, [runAnalysis])
 
-  // ─── Method 1: Browser Speech Recognition ────────────────────────────────
-  const startSpeechRecognition = useCallback(() => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-    if (!SR) return
+  // ─── Speech Recognition (mobile-safe hook) ───────────────────────────────
+  useSpeechRecognition({
+    isRecording,
+    onSegment: addSegment,
+    onInterim: setInterimText,
+    onError: (msg) => setMicError(msg),
+    onStatusChange: (status) => {
+      if (!status) setLiveStatus(null)
+      else if (status === 'listening') setLiveStatus('Listening…')
+      else if (status === 'restarting') setLiveStatus('Restarting…')
+      else setLiveStatus(status)
+    },
+  })
 
-    if (srRestartRef.current) clearTimeout(srRestartRef.current)
-    if (recognitionRef.current) {
-      recognitionRef.current.onend = null
-      try { recognitionRef.current.stop() } catch (_) {}
-    }
-
-    const r = new SR()
-    recognitionRef.current = r
-    r.continuous = true
-    r.interimResults = true
-    r.maxAlternatives = 1
-
-    r.onstart = () => {
-      setLiveStatus('Listening…')
-      if (srFlushIntervalRef.current) clearInterval(srFlushIntervalRef.current)
-      srFlushIntervalRef.current = setInterval(() => {
-        try { recognitionRef.current?.stop() } catch (_) {}
-      }, 15000)
-    }
-
-    r.onresult = (e) => {
-      let interim = ''
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        if (e.results[i].isFinal) {
-          addSegment(e.results[i][0].transcript)
-          interim = ''
-        } else {
-          interim += e.results[i][0].transcript
-        }
-      }
-      setInterimText(interim)
-    }
-
-    r.onerror = (e) => {
-      if (e.error === 'not-allowed') {
-        setMicError('Microphone access denied. Allow permissions and reload.')
-      }
-      // no-speech / network / audio-capture — just restart silently
-    }
-
-    r.onend = () => {
-      if (srFlushIntervalRef.current) clearInterval(srFlushIntervalRef.current)
-      setInterimText('')
-      if (isRecordingRef.current) {
-        srRestartRef.current = setTimeout(startSpeechRecognition, 300)
-      } else {
-        setLiveStatus(null)
-      }
-    }
-
-    try { r.start() } catch (_) {
-      srRestartRef.current = setTimeout(startSpeechRecognition, 500)
-    }
-  }, [addSegment])
-
-  const stopSpeechRecognition = useCallback(() => {
-    if (srRestartRef.current) clearTimeout(srRestartRef.current)
-    if (recognitionRef.current) {
-      try { recognitionRef.current.stop() } catch (_) {} // Allows final onresult to flush organically
-    }
-  }, [])
-
-  // ─── Method 2: Backend audio chunk transcription ──────────────────────────
-  const sendAudioChunk = useCallback(async (blob, mimeType) => {
-    if (!blob || blob.size < 300) return
-    const ext = mimeType.includes('mp4') ? 'mp4' : mimeType.includes('ogg') ? 'ogg' : 'webm'
-    const fd = new FormData()
-    fd.append('audio', new Blob([blob], { type: mimeType }), `chunk.${ext}`)
-    setLiveStatus('Transcribing…')
-    try {
-      const controller = new AbortController()
-      const t = setTimeout(() => controller.abort(), 20000)
-      const res = await fetch(`${BACKEND_URL}/transcribe`, { method: 'POST', body: fd, signal: controller.signal })
-      clearTimeout(t)
-      if (res.ok) {
-        const data = await res.json()
-        if (data.transcript?.trim()) addSegment(data.transcript)
-      }
-    } catch (err) {
-      if (err.name !== 'AbortError') {
-        setBackendError('Backend transcription timed out. Browser recognition still active.')
-        setTimeout(() => setBackendError(null), 8000)
-      }
-    } finally {
-      if (isRecordingRef.current) setLiveStatus('Listening…')
-      else setLiveStatus(null)
-    }
-  }, [addSegment])
-
-  const startAudioCapture = useCallback(() => {
-    const mimeType = getBestMimeType()
-
-    const recordChunk = () => {
-      if (!isRecordingRef.current || !streamRef.current) return
-      let rec
+  // ─── Wake Lock (prevent screen sleep during monitoring) ──────────────────
+  const acquireWakeLock = useCallback(async () => {
+    if ('wakeLock' in navigator) {
       try {
-        rec = mimeType
-          ? new MediaRecorder(streamRef.current, { mimeType })
-          : new MediaRecorder(streamRef.current)
-      } catch (_) {
-        rec = new MediaRecorder(streamRef.current)
-      }
-      mediaRecorderRef.current = rec
-      rec.ondataavailable = (e) => { if (e.data?.size > 0) sendAudioChunk(e.data, rec.mimeType || mimeType || 'audio/webm') }
-      rec.onstop = () => { if (isRecordingRef.current) recordChunk() }
-      rec.start()
-      setTimeout(() => {
-        if (isRecordingRef.current && rec.state !== 'inactive') rec.stop()
-      }, CHUNK_INTERVAL_MS)
+        wakeLockRef.current = await navigator.wakeLock.request('screen')
+      } catch (_) { /* not fatal */ }
     }
-    recordChunk()
-  }, [sendAudioChunk])
-
-  const stopAudioCapture = useCallback(() => {
-    if (mediaRecorderRef.current?.state !== 'inactive') {
-      try { mediaRecorderRef.current.stop() } catch (_) {} // triggers final ondataavailable
-    }
-    // Give browser 1000ms to flush the blob before severing the track
-    setTimeout(() => {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach(t => t.stop())
-        streamRef.current = null
-      }
-    }, 1000)
   }, [])
 
-  // ─── Start / Stop handlers ────────────────────────────────────────────────
-  const handleStart = async () => {
-    setMicError(null)
-    firstSegmentRef.current = false
-    setLiveStatus('Connecting…')
-
-    // Acquire Screen Wake Lock to prevent mobile OS hibernation
-    try {
-      if ('wakeLock' in navigator) {
-        wakeLockRef.current = await navigator.wakeLock.request('screen')
-      }
-    } catch (_) {}
-
-    // Wake Render backend
-    try { await fetch(`${BACKEND_URL}/health`) } catch (_) {}
-
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
-
-    try {
-      if (SR) {
-        // Request microphone permission to ensure it's granted
-        const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        // Immediately release the microphone because Android allows only one audio capture session,
-        // and Speech Recognition needs exclusive control.
-        tempStream.getTracks().forEach(t => t.stop())
-        await new Promise(resolve => setTimeout(resolve, 300)) // Give Android OS time to free the mic lock
-        
-        isRecordingRef.current = true // forcefully update ref before start
-        setIsRecording(true)
-        setLiveStatus('Listening…')
-        startSpeechRecognition()
-      } else {
-        // Fallback for browsers without SpeechRecognition
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-        streamRef.current = stream
-        isRecordingRef.current = true // forcefully update ref before start
-        setIsRecording(true)
-        setLiveStatus('Listening…')
-        startAudioCapture()
-      }
-    } catch (err) {
-      setMicError('Microphone access denied. Please allow microphone permissions and reload.')
-      setLiveStatus(null)
-    }
-  }
-
-  const handleStop = () => {
-    isRecordingRef.current = false // forcefully update ref to stop restart loops
-    setIsRecording(false)
-    setLiveStatus(null)
-    stopSpeechRecognition()
-    stopAudioCapture()
-    if (srFlushIntervalRef.current) clearInterval(srFlushIntervalRef.current)
+  const releaseWakeLock = useCallback(() => {
     if (wakeLockRef.current) {
       try { wakeLockRef.current.release() } catch (_) {}
       wakeLockRef.current = null
     }
+  }, [])
+
+  // Re-acquire wake lock if page becomes visible again (tab switch, screen on)
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isRecordingRef.current) {
+        acquireWakeLock()
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
+  }, [acquireWakeLock])
+
+  // ─── Start / Stop handlers ────────────────────────────────────────────────
+  const handleStart = async () => {
+    setMicError(null)
+    setBackendError(null)
+    firstSegmentRef.current = false
+    setLiveStatus('Connecting…')
+
+    // Acquire Screen Wake Lock to prevent mobile OS hibernation
+    await acquireWakeLock()
+
+    // Warm up backend (prevents cold-start delay on first analysis)
+    try { await fetch(`${BACKEND_URL}/health`) } catch (_) {}
+
+    // Check Speech Recognition support before doing anything else
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition
+    if (!SR) {
+      setMicError('Live transcription is not supported in this browser. Please use Chrome on Android or Safari on iOS.')
+      setLiveStatus(null)
+      releaseWakeLock()
+      return
+    }
+
+    // Just flip the recording state — the useSpeechRecognition hook takes
+    // over from here. No getUserMedia pre-flight needed; the hook lets the
+    // browser's SR engine negotiate mic access directly, avoiding the
+    // Android mic-lock race condition.
+    setIsRecording(true)
+  }
+
+  const handleStop = () => {
+    setIsRecording(false)
+    setLiveStatus(null)
+    setInterimText('')
+    releaseWakeLock()
+    // Give hook 800ms to deliver any pending final results before running final analysis
     setTimeout(runAnalysis, 800)
   }
 
@@ -334,14 +202,10 @@ export default function App() {
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      stopSpeechRecognition()
-      stopAudioCapture()
-      if (srFlushIntervalRef.current) clearInterval(srFlushIntervalRef.current)
-      if (wakeLockRef.current) {
-        try { wakeLockRef.current.release() } catch (_) {}
-      }
+      clearInterval(analysisRef.current)
+      releaseWakeLock()
     }
-  }, [stopSpeechRecognition, stopAudioCapture])
+  }, [releaseWakeLock])
 
   const handleUploadResult = (data, fileName) => {
     setUploadResult(data)
@@ -476,7 +340,7 @@ export default function App() {
                     <span style={{
                       display: 'inline-block', width: '7px', height: '7px', borderRadius: '50%',
                       background: liveStatus === 'Listening…' ? 'var(--safe-color)' :
-                        liveStatus === 'Transcribing…' ? 'var(--suspicious-color)' : 'var(--text-muted)',
+                        liveStatus === 'Restarting…' ? 'var(--suspicious-color)' : 'var(--text-muted)',
                     }} />
                     {liveStatus || 'Initializing…'}
                   </div>
@@ -543,7 +407,9 @@ export default function App() {
 
       {/* Toasts */}
       {backendOnline === false && (
-        <div className="connection-toast toast-disconnected">⚠️ Backend offline — check server connection</div>
+        <div className="connection-toast toast-disconnected">
+          ⚠️ Backend offline — on mobile, use your laptop's LAN IP (not localhost)
+        </div>
       )}
       {backendOnline === true && !isRecording && segments.length === 0 && activeTab === 'live' && (
         <div className="connection-toast toast-connected">✓ Backend connected — ready to monitor</div>
