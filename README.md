@@ -28,9 +28,9 @@ VishGuard actively monitors phone calls using your device's browser, transcribes
 ### ⚙️ Advanced Backend
 | Feature | Detail |
 |---|---|
-| **AI Model** | `gemini-2.5-flash-lite` with all safety filters set to `BLOCK_NONE` to allow analysis of sensitive vishing transcripts |
+| **AI Model** | `<your-ai-engine-model>` configured for threat analysis of sensitive vishing transcripts |
 | **API Key Pool** | Supports an unlimited number of AI API keys, comma-separated in `.env` |
-| **Key Rotation** | Automatically rotates to the next key on a Google hard-quota `429` error |
+| **Key Rotation** | Automatically rotates to the next key when the AI provider returns a hard-quota `429` error |
 | **Daily Cap** | Each key is hard-capped at **19 requests/day** (configurable via `DAILY_LIMIT`) to prevent surprise billing |
 | **Quota Persistence** | Usage counters are stored in `usage.json` (keyed by index, never by key string) and reset automatically each calendar day |
 | **Admin Dashboard** | `GET /admin-tracker` — a live progress-bar UI showing usage health for every configured key |
@@ -112,11 +112,9 @@ Create `backend/.env`:
 
 ```env
 # Comma-separated AI API keys (1 or more)
-API_KEYS=AIza...,AIza...
+API_KEYS=your-api-key-1,your-api-key-2
 PORT=4000
 ```
-
-> **Tip:** The key variable also accepts the aliases `GEMINI_API_KEYS` or `GEMINI_API_KEY` for backwards compatibility.
 
 Start the backend:
 
